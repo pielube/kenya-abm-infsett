@@ -1,0 +1,63 @@
+{
+  "samples": 256,
+  "dimensions": 31,
+  "replicates": 5,
+  "total_runs": 1280,
+  "seed": 42,
+  "sampler": "scipy.stats.qmc.LatinHypercube",
+  "settings": {
+    "scramble": true,
+    "strength": 1,
+    "optimization": null
+  },
+  "marginals": "uniform continuous; discrete uniform integers and categories",
+  "parameter_order": [
+    "n-households",
+    "n-poles",
+    "min-demand",
+    "initial-formal-pct",
+    "min-income",
+    "debt-threshold",
+    "min-informal-fee",
+    "max-informal-fee",
+    "pole-max-capacity",
+    "informal-connection-capacity",
+    "enforcement-number",
+    "enforcement-freq",
+    "init-trust-kplc",
+    "init-trust-ipd",
+    "p-switch-cost-only",
+    "p-switch-attitude",
+    "p-switch-all-factors",
+    "p-switch-cost-despite-attitude",
+    "a-switch-blackout",
+    "a-switch-debt",
+    "a-switch-demand",
+    "a-switch-enforcements",
+    "a-switch-satisfaction",
+    "a-switch-safety",
+    "a-switch-safety-other",
+    "blackouts-attitude",
+    "blackout-mitigation-pct",
+    "incidents-multiplier",
+    "incidents-radius",
+    "r1",
+    "r2"
+  ],
+  "excluded_parameters": [
+    "pole-connection-limit",
+    "formal-connection-limit",
+    "informal-sd-limit",
+    "hookon-limit"
+  ],
+  "seed_streams": {
+    "design": 0,
+    "model_runs": 1
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1"
+  },
+  "parameter_sha256": "84862e78dae49b62b591b2a5348a0ac793e418b2555e8b3831feeefe3daaeac9"
+}

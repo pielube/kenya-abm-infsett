@@ -1,0 +1,36 @@
+var,range,kind,lower,upper,categories,notes
+n-households,1800 to 2500,integer,1800,2500,,Household count
+n-poles,80 to 120,integer,80,120,,Pole count
+min-demand,1 to 10,continuous,1,10,,Units not supplied
+initial-formal-pct,10 to 70,continuous,10,70,,Percentage on the 0-100 scale
+min-income,100 to 700,continuous,100,700,,Currency and time basis not supplied
+debt-threshold,0.1 to 40,continuous,0.1,40,,Units not supplied
+min-informal-fee,50 to 300,continuous,50,300,,Currency and time basis not supplied
+max-informal-fee,300 to 700,continuous,300,700,,Currency and time basis not supplied
+pole-max-capacity,150 to 250,continuous,150,250,,Capacity units not supplied; change kind if the model requires integers
+informal-connection-capacity,10 to 20,continuous,10,20,,Capacity units not supplied; change kind if the model requires integers
+enforcement-number,0 to 20,integer,0,20,,Enforcement count
+enforcement-freq,20 to 100,integer,20,100,,Assumed interval in whole model time steps
+pole-connection-limit,not necessary to test?,excluded,,,,Range unspecified; retain model default or supply a fixed value when running
+formal-connection-limit,not necessary to test?,excluded,,,,Range unspecified; retain model default or supply a fixed value when running
+informal-sd-limit,not necessary to test?,excluded,,,,Range unspecified; retain model default or supply a fixed value when running
+hookon-limit,not necessary to test?,excluded,,,,Range unspecified; retain model default or supply a fixed value when running
+init-trust-kplc,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+init-trust-ipd,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+p-switch-cost-only,0 to 100,continuous,0,100,,Independent percentage; no sum constraint supplied
+p-switch-attitude,0 to 100,continuous,0,100,,Independent percentage; no sum constraint supplied
+p-switch-all-factors,0 to 100,continuous,0,100,,Independent percentage; no sum constraint supplied
+p-switch-cost-despite-attitude,0 to 100,continuous,0,100,,Independent percentage; no sum constraint supplied
+a-switch-blackout,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+a-switch-debt,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+a-switch-demand,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+a-switch-enforcements,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+a-switch-satisfaction,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+a-switch-safety,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+a-switch-safety-other,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+blackouts-attitude,"1 of 4 categorical variables: call them a, b, c, d",categorical,,,a|b|c|d,Equal probability placeholder labels; map to actual model labels before running
+blackout-mitigation-pct,0 to 100,continuous,0,100,,Percentage on the 0-100 scale
+incidents-multiplier,0.1 to 10,continuous,0.1,10,,Uniform on the original scale
+incidents-radius,0.1 to 5,continuous,0.1,5,,Distance units not supplied
+r1,0.1 to 5,continuous,0.1,5,,Meaning and units not supplied
+r2,0.1 to 5,continuous,0.1,5,,Meaning and units not supplied
