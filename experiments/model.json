@@ -1,0 +1,32 @@
+{
+  "model": "models/kenya_informal_settlements.nlogox",
+  "netlogo_version": "7.0.3",
+  "max_steps": 1480,
+  "aliases": {
+    "init-trust-kplc": "init-attitude-kplc",
+    "init-trust-ipd": "init-attitude-ipd"
+  },
+  "category_values": {
+    "blackouts-attitude": {
+      "a": "only-hurt-kplc",
+      "b": "hurt-both-providers",
+      "c": "ipd-partial-mitigation",
+      "d": "ipd-full-mitigation"
+    }
+  },
+  "metrics": {
+    "ticks": "ticks",
+    "households": "count houses",
+    "poles": "count poles",
+    "formal_households": "count houses with [connection-status = \"f\"]",
+    "informal_households": "count houses with [connection-status = \"i\"]",
+    "unconnected_households": "count houses with [connection-status = \"n\"]",
+    "service_drop_households": "count houses with [any? my-informal-sds]",
+    "hookon_households": "count houses with [any? my-in-informal-hookons]",
+    "trust_kplc_pct": "100 * count houses with [attitude-kplc] / count houses",
+    "trust_ipd_pct": "100 * count houses with [attitude-ipd] / count houses",
+    "mean_debt": "mean [debt] of houses",
+    "mean_switchcount": "mean [switchcount] of houses",
+    "overloaded_poles": "count poles with [pole-overloaded]"
+  }
+}

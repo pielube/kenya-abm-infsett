@@ -1,0 +1,2 @@
+# Keep model bytes unchanged so saved checksums work on every operating system.
+*.nlogox -text
