@@ -1,0 +1,90 @@
+{
+  "mode": "base",
+  "model_path": "C:\\git\\kenya-abm-infsett\\models\\kenya_informal_settlements.nlogox",
+  "model_version": "NetLogo 7.0.3",
+  "runner_sha256": "b385611ff573aa9cec27566d4abd5988a42df69b510a295e96829409a71b9f7c",
+  "model_sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987",
+  "config": {
+    "model": "models/kenya_informal_settlements.nlogox",
+    "netlogo_version": "7.0.3",
+    "max_steps": 1480,
+    "aliases": {
+      "init-trust-kplc": "init-attitude-kplc",
+      "init-trust-ipd": "init-attitude-ipd"
+    },
+    "category_values": {
+      "blackouts-attitude": {
+        "a": "only-hurt-kplc",
+        "b": "hurt-both-providers",
+        "c": "ipd-partial-mitigation",
+        "d": "ipd-full-mitigation"
+      }
+    },
+    "metrics": {
+      "ticks": "ticks",
+      "households": "count houses",
+      "poles": "count poles",
+      "formal_households": "count houses with [connection-status = \"f\"]",
+      "informal_households": "count houses with [connection-status = \"i\"]",
+      "unconnected_households": "count houses with [connection-status = \"n\"]",
+      "service_drop_households": "count houses with [any? my-informal-sds]",
+      "hookon_households": "count houses with [any? my-in-informal-hookons]",
+      "trust_kplc_pct": "100 * count houses with [attitude-kplc] / count houses",
+      "trust_ipd_pct": "100 * count houses with [attitude-ipd] / count houses",
+      "mean_debt": "mean [debt] of houses",
+      "mean_switchcount": "mean [switchcount] of houses",
+      "overloaded_poles": "count poles with [pole-overloaded]"
+    }
+  },
+  "sources": {
+    "base": "f4284aa24fcb4e255f1cfe280fd3afb6d579e997175bb7b834239b2016ebd17d"
+  },
+  "steps": 1480,
+  "runs": [
+    {
+      "run_id": 1,
+      "sample_id": 1,
+      "replicate": 1,
+      "model_seed": 42,
+      "parameters": {
+        "initial-formal-pct": 50,
+        "n-households": 2000,
+        "n-poles": 100,
+        "min-income": 500,
+        "min-demand": 2,
+        "min-informal-fee": 200,
+        "max-informal-fee": 500,
+        "formal-connect-fee": 625,
+        "pole-max-capacity": 180,
+        "informal-connection-capacity": 13,
+        "enforcement-number": 5,
+        "enforcement-freq": 110,
+        "pole-connection-limit": 5,
+        "formal-connection-limit": 5,
+        "informal-sd-limit": 4,
+        "hookon-limit": 3,
+        "init-attitude-ipd": 60,
+        "init-attitude-kplc": 40,
+        "debt-threshold": 10,
+        "p-switch-cost-only": 40,
+        "p-switch-attitude": 10,
+        "p-switch-all-factors": 50,
+        "p-switch-cost-despite-attitude": 20,
+        "a-switch-blackout": 50,
+        "a-switch-debt": 50,
+        "a-switch-safety": 50,
+        "a-switch-demand": 50,
+        "a-switch-enforcements": 50,
+        "a-switch-satisfaction": 50,
+        "blackouts-attitude": "only-hurt-kplc",
+        "blackout-mitigation-pct": 50,
+        "incidents-multiplier": 5,
+        "incidents-radius": 1,
+        "a-switch-safety-other": 50,
+        "r1": 2,
+        "r2": 2
+      }
+    }
+  ],
+  "fingerprint": "7f3d40f5fa4fa5f97a10d1e4b4a3f74aafb0a3d63f01dcc4597d0669a5c908e5"
+}

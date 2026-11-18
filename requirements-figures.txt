@@ -1,0 +1,6 @@
+# Optional scientific figure environment; separate from the NetLogo runner.
+numpy>=2.0,<3
+pandas>=2.2,<4
+matplotlib>=3.9,<4
+Pillow>=10,<13
+openpyxl>=3.1,<4

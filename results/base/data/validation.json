@@ -1,0 +1,14 @@
+[
+  {
+    "tick": 52,
+    "reference": "results/base/runs/52_ticks/results.csv",
+    "differences": {},
+    "passed": true
+  },
+  {
+    "tick": 1480,
+    "reference": "results/base/runs/1480_ticks/results.csv",
+    "differences": {},
+    "passed": true
+  }
+]

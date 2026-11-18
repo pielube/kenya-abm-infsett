@@ -1,0 +1,7 @@
+ticks,repetition,wall_seconds,returncode,matches_saved_endpoint,model_hash_unchanged,output_directory
+52,1,13.032013099989854,0,True,True,outputs\base_publication\benchmark\ticks_52_repeat_1
+52,2,13.615078299975721,0,True,True,outputs\base_publication\benchmark\ticks_52_repeat_2
+52,3,13.350182700000005,0,True,True,outputs\base_publication\benchmark\ticks_52_repeat_3
+1480,1,30.343209599988768,0,True,True,outputs\base_publication\benchmark\ticks_1480_repeat_1
+1480,2,30.58739699999569,0,True,True,outputs\base_publication\benchmark\ticks_1480_repeat_2
+1480,3,32.5324699000048,0,True,True,outputs\base_publication\benchmark\ticks_1480_repeat_3

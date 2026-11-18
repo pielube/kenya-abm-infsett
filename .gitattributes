@@ -1,2 +1,5 @@
 # Keep model bytes unchanged so saved checksums work on every operating system.
 *.nlogox -text
+
+# Preserve archived data, figures, and provenance checksums across platforms.
+results/base/** -text -whitespace

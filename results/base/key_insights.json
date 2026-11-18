@@ -1,0 +1,25 @@
+{
+  "formal_min_week": 8,
+  "formal_min_pct": 23.3,
+  "informal_max_week": 46,
+  "informal_max_pct": 66.25,
+  "observed_status_changes": 274900,
+  "household_week_observations": 2960000,
+  "observed_status_change_pct": 9.287162162162161,
+  "minimum_kplc_positive_pct": 8.0,
+  "minimum_kplc_positive_week": 56,
+  "mean_poles_overloaded_pct": 36.377027027027026,
+  "mean_household_outage_exposure_pct": 36.92185810810811,
+  "final_formal_access_pct_by_income_quintile": [
+    68.25,
+    51.24999999999999,
+    43.25,
+    45.25,
+    58.75
+  ],
+  "poorest_quintile_median_expense_pct": {
+    "52": 13.583064652146003,
+    "1480": 5.836486879617052
+  },
+  "final_formal_installments_due": 0
+}

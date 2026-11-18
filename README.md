@@ -46,6 +46,11 @@ Edit `experiments/base.json` to change starting values. Edit
 was copied unchanged; `models/source.json` records its original filename and
 checksum. Each experiment also saves its own model copy.
 
+The reviewed 52-tick and 1,480-tick base runs, diagnostic observations, figures,
+and source data are preserved in the Git-tracked [base results archive](results/base/README.md).
+New runs still use `outputs/` as scratch space; the `base_*`, `batch_*`, and
+`smoke_*` output folders are ignored by Git.
+
 ## Create sampled inputs
 
 A **configuration** is one combination of input values. Latin Hypercube Sampling
@@ -83,9 +88,10 @@ python run_model.py batch --threads 4 --output outputs/batch_lhs --resume
 ```
 
 The full batch uses **1,280 runs of 1,480 ticks** and can take much longer.
-Choose another duration with `--steps` and a new output folder. The full batch
-was prepared locally during setup; `--resume` starts its pending runs. To check
-the setup without launching NetLogo, add `--prepare-only`.
+Choose another duration with `--steps` and a new output folder. The prepared
+1,280-run plan remains in `outputs/batch_lhs/`; `--resume` starts its pending
+runs. To prepare a separate plan without launching NetLogo, choose a fresh
+output folder and add `--prepare-only`.
 
 To continue an interrupted or prepared batch, repeat its command with `--resume`.
 Completed runs are kept; unfinished ones are retried with their original inputs
@@ -97,13 +103,17 @@ folder.
 | File or folder | What it is for |
 | --- | --- |
 | `models/` | The supplied NetLogo model and its source details |
+| [Base model guide](docs/base-model-guide.md) | Model purpose, rules, base results, interpretation, and code navigation |
+| [Base figures](docs/base-figures.md) | Runtime benchmarks, four diagnostic figures, source data, and reproduction |
+| [Base results archive](results/base/README.md) | Git-tracked base runs, figures, observations, source data, and provenance |
 | `experiments/base.json` | Starting values for the base run |
 | `experiments/model.json` | Input-name translations and results to record |
 | `data/parameters.csv` | Ranges and types for LHS inputs |
 | `lhs.py` | Creates configurations and the list of runs |
 | `run_model.py` | Prepares, runs, and restarts NetLogo experiments |
 | `outputs/lhs_256/` | The original sampled inputs |
-| `outputs/base_run/`, `outputs/batch_*/` | Results, actual inputs, model copies, and logs |
+| `outputs/batch_lhs/` | Preserved prepared full-batch plan and resolved inputs; no completed simulations |
+| `outputs/base_*/`, `outputs/batch_*/` | Ignored scratch runs, actual inputs, model copies, and logs |
 
 Each successful run has one row in `results.csv`, with its IDs and seed.
 The starting results include connection types, trust, debt, switching, and

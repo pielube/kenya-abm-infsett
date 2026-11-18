@@ -1,0 +1,147 @@
+{
+  "seed": 42,
+  "replicates": 1,
+  "width_mm": 180,
+  "font": "Arial",
+  "body_font_pt": 7,
+  "panel_font_pt": 8,
+  "raster_dpi": 300,
+  "python": "3.11.15",
+  "matplotlib": "3.10.9",
+  "pandas": "3.0.3",
+  "plot_script_sha256": "8663968383dc4f180cf6e8d3c4f7cd343179e23c8b73586fb0512a35e5a70976",
+  "input_sha256": {
+    "aggregate.csv": "8ab980a4c08772786a173f393f8835f1a01571564662c579bc6be3bbf2da81ee",
+    "households.csv": "e221ebca058bfb854004d404e285a346870c8309f3fe0b219a550c4e7aa3c083",
+    "poles.csv": "527ade2f3935c37bbce82e2ca63305213c793636129494c58d0ab9dbc0a94368",
+    "transitions.csv": "9771b3a3d64f719a9204a3698f6b174d9078e8fcc6bccb503372c840c5734109"
+  },
+  "figures": [
+    {
+      "name": "extended_data_01_access_dynamics",
+      "panels": [
+        "a",
+        "b",
+        "c"
+      ],
+      "size_mm": [
+        180,
+        140.0
+      ],
+      "caption_words": 109,
+      "files": {
+        "pdf": {
+          "bytes": 113348,
+          "sha256": "35562879a0fe870a6bf560c0b60574ab43b20dbf3879c4117e9107accf737d70"
+        },
+        "svg": {
+          "bytes": 323320,
+          "sha256": "9da61a7ee34a4f109b444438ba56bac294aa6901db92f208fa8f29eead6a32d0"
+        },
+        "png": {
+          "bytes": 235822,
+          "sha256": "809682340afd3e0f354a88845213fbf31a14339fb232370243cc855fe6b884d5"
+        },
+        "tiff": {
+          "bytes": 296234,
+          "sha256": "ffb4e2abe2b2d4584e5a59c88c5b7b372e5e6cce31e9bc42a7538c041161c08b"
+        }
+      }
+    },
+    {
+      "name": "extended_data_02_provider_attitudes",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "size_mm": [
+        180,
+        145.0
+      ],
+      "caption_words": 108,
+      "files": {
+        "pdf": {
+          "bytes": 133313,
+          "sha256": "f875081147554e6e84dbd903c73480e11ac6889b2cc540216310d607a002490e"
+        },
+        "svg": {
+          "bytes": 390607,
+          "sha256": "7b171fa631cf5dbb5a8099c0f1608af4f26aa1c31bbfbd2abd71a8441c6f6e4e"
+        },
+        "png": {
+          "bytes": 217911,
+          "sha256": "0736376f059d240763bd06de8a72010ee07f4e985d26648ade7cc974799d9de2"
+        },
+        "tiff": {
+          "bytes": 280192,
+          "sha256": "67da2298ddb59f1d2f66903922b97b7786ecada385684e411a84c796c1bfe1b6"
+        }
+      }
+    },
+    {
+      "name": "extended_data_03_reliability_diagnostics",
+      "panels": [
+        "a",
+        "b",
+        "c"
+      ],
+      "size_mm": [
+        180,
+        145.0
+      ],
+      "caption_words": 136,
+      "files": {
+        "pdf": {
+          "bytes": 68515,
+          "sha256": "325ca6a65797a40e647e375a9856ff2421eb06d661c6560d16eb3517cd4f9e81"
+        },
+        "svg": {
+          "bytes": 110023,
+          "sha256": "01386afa7b9c811f2fdf24874bfab4d7d011842b935eb4b330734d58fbad1bc2"
+        },
+        "png": {
+          "bytes": 378699,
+          "sha256": "704261b1be4cec1acc3300f616b887db20e34160fd1a4de1aed3d39a18fad0ea"
+        },
+        "tiff": {
+          "bytes": 540284,
+          "sha256": "692950989642d492d05ee59e25ae64088d9cc38a3fbbe5ef8dc8e3cabe3dd52d"
+        }
+      }
+    },
+    {
+      "name": "extended_data_04_affordability_and_income",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "size_mm": [
+        180,
+        145.0
+      ],
+      "caption_words": 152,
+      "files": {
+        "pdf": {
+          "bytes": 54908,
+          "sha256": "9cd5726eef3e6d2701560b2dcb4c1fb2173e23bcc6c4c41d7ab8f1d54f48addf"
+        },
+        "svg": {
+          "bytes": 67336,
+          "sha256": "cccb4dd3e046a2a618206085880cc32a71216f914e85da792f314bc9b91946cc"
+        },
+        "png": {
+          "bytes": 249200,
+          "sha256": "fbb9b714c7bd80fae0e4c7cd8713c9e8698eba5fbaf4f1d19a7cce4f1f2fadcb"
+        },
+        "tiff": {
+          "bytes": 279272,
+          "sha256": "48e35b2f22244e04a7b3dd2ebb3fd8c7d574242e3698bfb74c14f363430cd5e8"
+        }
+      }
+    }
+  ]
+}

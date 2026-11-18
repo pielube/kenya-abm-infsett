@@ -1,0 +1,163 @@
+
+
+; Observer-only publication data export. Supplied setup/go procedures unchanged.
+to publication-setup
+  setup
+  with-local-randomness [
+    set publication-houses sort houses
+    set publication-poles sort poles
+    let income-order sort-by [[a b] -> [income] of a < [income] of b] publication-houses
+    set publication-income-groups (map [ q -> sublist income-order (q * 400) ((q + 1) * 400) ] (range 5))
+    set publication-outage-formal 0
+    set publication-outage-informal 0
+    set publication-outage-total 0
+    set publication-outage-by-quintile n-values 5 [0]
+    set publication-previous-statuses map [ h -> [connection-status] of h ] publication-houses
+    publication-initialize-files
+    publication-observe
+  ]
+end
+
+to publication-go
+  go
+  with-local-randomness [
+    publication-observe
+    if ticks = 1480 [ file-close-all ]
+  ]
+end
+
+to publication-write-row [ filename values ]
+  file-open filename
+  file-print csv:to-row values
+end
+
+to publication-initialize-files
+  file-close-all
+  foreach ["aggregate.csv" "households.csv" "poles.csv" "links.csv" "transitions.csv" "income_quintiles.csv"] [ filename ->
+    if file-exists? filename [ file-delete filename ]
+  ]
+  publication-write-row "aggregate.csv" (list "tick" "households" "poles" "formal_households" "informal_households" "unconnected_households" "service_drop_households" "hookon_households" "trust_kplc_pct" "trust_ipd_pct" "mean_debt" "mean_switchcount" "overloaded_poles" "overloaded_households" "issues_households" "overspending_households" "formal_overspending" "informal_overspending" "formal_positive_kplc" "formal_positive_ipd" "informal_positive_kplc" "informal_positive_ipd" "like_both" "like_kplc_only" "like_ipd_only" "like_neither" "informal_cheaper_households" "formal_installments_due" "mean_informal_fee" "mean_spend_ratio" "mean_installments_remaining" "cumulative_nonpayment_disconnects_kplc" "cumulative_nonpayment_disconnects_ipd" "cumulative_negotiations" "mean_pole_usage" "max_pole_usage" "total_pole_usage" "formal_unpaid_installments" "informal_missed_payments" "blackout_phase_formal_exposed" "blackout_phase_informal_exposed" "blackout_phase_total_exposed")
+  publication-write-row "households.csv" (list "tick" "who" "x" "y" "status" "access_type" "income" "demand" "tariff" "informal_fee" "desired_expense" "expense" "budget" "spend_ratio" "debt_index" "installments_remaining" "unpaid_installments" "unpaid_informal_fees" "attitude_kplc" "attitude_ipd" "issues" "switch_counter" "weeks_continuous_informal" "cant_afford_counter" "formal_next_month_cost" "informal_next_month_cost" "source_id" "source_pole_id")
+  publication-write-row "poles.csv" (list "tick" "who" "x" "y" "usage" "capacity" "overloaded" "formal_connections" "direct_informal_connections" "hookon_connections")
+  publication-write-row "links.csv" (list "tick" "type" "source_id" "target_id" "source_x" "source_y" "target_x" "target_y" "overloaded")
+  publication-write-row "transitions.csv" (list "tick" "from_status" "to_status" "households")
+  publication-write-row "income_quintiles.csv" (list "tick" "income_quintile" "households" "mean_income" "median_income" "formal_households" "informal_households" "unconnected_households" "positive_kplc" "positive_ipd" "mean_debt" "mean_spend_ratio" "overspending_households" "formal_installments_due" "blackout_phase_exposed")
+end
+
+to publication-capture-reliability
+  with-local-randomness [
+    let exposed houses with [any? my-links with [overloaded = true]]
+    set publication-outage-formal count exposed with [connection-status = "f"]
+    set publication-outage-informal count exposed with [connection-status = "i"]
+    set publication-outage-total count exposed
+    set publication-outage-by-quintile map [ group ->
+      length filter [h -> [any? my-links with [overloaded = true]] of h] group
+    ] publication-income-groups
+  ]
+end
+
+to publication-observe
+  let formals houses with [ connection-status = "f" ]
+  let informals houses with [ connection-status = "i" ]
+  publication-write-row "aggregate.csv" (list
+    ticks count houses count poles count formals count informals
+    count houses with [connection-status = "n"]
+    count houses with [any? my-informal-sds]
+    count houses with [any? my-in-informal-hookons]
+    (100 * count houses with [attitude-kplc = true] / count houses)
+    (100 * count houses with [attitude-ipd = true] / count houses)
+    mean [debt] of houses mean [switchcount] of houses
+    count poles with [pole-overloaded = true]
+    count houses with [any? my-links with [overloaded = true]]
+    count houses with [issues-this-tick = true]
+    count houses with [spend-ratio > 1]
+    count formals with [spend-ratio > 1]
+    count informals with [spend-ratio > 1]
+    count formals with [attitude-kplc = true]
+    count formals with [attitude-ipd = true]
+    count informals with [attitude-kplc = true]
+    count informals with [attitude-ipd = true]
+    count houses with [attitude-kplc = true and attitude-ipd = true]
+    count houses with [attitude-kplc = true and attitude-ipd = false]
+    count houses with [attitude-kplc = false and attitude-ipd = true]
+    count houses with [attitude-kplc = false and attitude-ipd = false]
+    count houses with [next-month-informal-cost < next-month-formal-cost]
+    count formals with [installments-remaining > 0]
+    mean [informal-flat-fee] of houses
+    mean [spend-ratio] of houses mean [installments-remaining] of houses
+    count-disconnect-kplc count-disconnect-ipd count-negotiate
+    mean [pole-usage] of poles max [pole-usage] of poles sum [pole-usage] of poles
+    count formals with [times-installment-not-paid > 0]
+    count informals with [times-ipd-not-paid > 0]
+    publication-outage-formal publication-outage-informal publication-outage-total
+  )
+  foreach publication-poles [ p -> ask p [
+    let hookons sum [count my-informal-hookons] of formal-connection-neighbors
+    publication-write-row "poles.csv" (list ticks who xcor ycor pole-usage pole-capacity
+      (pole-overloaded = true) count my-formal-connections count my-informal-sds hookons)
+  ] ]
+  foreach (range 5) [ q ->
+    let group turtle-set item q publication-income-groups
+    publication-write-row "income_quintiles.csv" (list ticks (q + 1) count group
+      mean [income] of group median [income] of group
+      count group with [connection-status = "f"]
+      count group with [connection-status = "i"]
+      count group with [connection-status = "n"]
+      count group with [attitude-kplc = true] count group with [attitude-ipd = true]
+      mean [debt] of group mean [spend-ratio] of group
+      count group with [spend-ratio > 1]
+      count group with [connection-status = "f" and installments-remaining > 0]
+      item q publication-outage-by-quintile)
+  ]
+  if ticks > 0 [
+    let new-statuses map [ h -> [connection-status] of h ] publication-houses
+    foreach ["f" "i" "n"] [ old ->
+      foreach ["f" "i" "n"] [ new ->
+        let indicators (map [ [a b] -> ifelse-value (a = old and b = new) [1] [0] ] publication-previous-statuses new-statuses)
+        publication-write-row "transitions.csv" (list ticks old new sum indicators)
+      ]
+    ]
+    set publication-previous-statuses new-statuses
+  ]
+  if member? ticks (list 0 4 12 24 52 104 220 440 740 1100 1480) [
+    foreach publication-houses [ h -> ask h [
+      let access-type "unconnected"
+      let source-id -1
+      let source-pole-id -1
+      if any? my-formal-connections [
+        set access-type "formal"
+        set source-id [who] of first sort in-formal-connection-neighbors
+        set source-pole-id source-id
+      ]
+      if any? my-informal-sds [
+        set access-type "service_drop"
+        set source-id [who] of first sort in-informal-sd-neighbors
+        set source-pole-id source-id
+      ]
+      if any? my-in-informal-hookons [
+        set access-type "hookon"
+        let source-house first sort in-informal-hookon-neighbors
+        set source-id [who] of source-house
+        if any? [in-formal-connection-neighbors] of source-house [
+          set source-pole-id [who] of first sort [in-formal-connection-neighbors] of source-house
+        ]
+      ]
+      publication-write-row "households.csv" (list ticks who xcor ycor connection-status access-type
+        income demand tariff informal-flat-fee desired-max-expense expense HH-budget spend-ratio debt
+        installments-remaining times-installment-not-paid times-ipd-not-paid
+        attitude-kplc attitude-ipd (issues-this-tick = true) switchcount weeks-continuous-informal cant-afford
+        next-month-formal-cost next-month-informal-cost source-id source-pole-id)
+    ] ]
+  ]
+  if member? ticks [0 52 1480] [
+    foreach sort links [ edge-agent -> ask edge-agent [
+      let kind "pole"
+      let is-overloaded false
+      if breed = formal-connections [set kind "formal" set is-overloaded overloaded = true]
+      if breed = informal-sds [set kind "service_drop" set is-overloaded overloaded = true]
+      if breed = informal-hookons [set kind "hookon" set is-overloaded overloaded = true]
+      publication-write-row "links.csv" (list ticks kind [who] of end1 [who] of end2
+        [xcor] of end1 [ycor] of end1 [xcor] of end2 [ycor] of end2 is-overloaded)
+    ] ]
+  ]
+end

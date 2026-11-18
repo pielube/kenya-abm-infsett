@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "aggregate_ticks": 1481,
+  "pole_rows": 148100,
+  "household_rows": 22000,
+  "quintile_rows": 7405,
+  "transition_rows": 13320,
+  "checks": [
+    "Consecutive ticks 0 through 1480",
+    "100 poles and five 400-household quintiles per tick",
+    "2000 households per selected snapshot",
+    "Fixed household locations, incomes and demands",
+    "Adjacent transition origin and destination totals match states",
+    "Quintile and aggregate pre-switch outage exposure agree"
+  ],
+  "source_sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987"
+}

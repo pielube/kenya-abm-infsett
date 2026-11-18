@@ -1,0 +1,75 @@
+{
+    "action":  "Archive canonical base results and remove unnecessary generated runs",
+    "retained":  {
+                     "outputs/base_publication":  "results/base",
+                     "outputs/base_run":  "results/base/runs/52_ticks",
+                     "outputs/lhs_256":  "outputs/lhs_256",
+                     "outputs/base_analysis_check":  "results/base/setup",
+                     "outputs/batch_lhs":  "outputs/batch_lhs",
+                     "outputs/base_full":  "results/base/runs/1480_ticks"
+                 },
+    "removed":  [
+                    {
+                        "path":  "outputs/base_engine_check",
+                        "files":  9,
+                        "bytes":  177679
+                    },
+                    {
+                        "path":  "outputs/base_initial_check",
+                        "files":  9,
+                        "bytes":  177676
+                    },
+                    {
+                        "path":  "outputs/base_smoke",
+                        "files":  13,
+                        "bytes":  180948
+                    },
+                    {
+                        "path":  "outputs/batch_smoke",
+                        "files":  9,
+                        "bytes":  193095
+                    },
+                    {
+                        "path":  "outputs/smoke_lhs",
+                        "files":  5,
+                        "bytes":  9505
+                    },
+                    {
+                        "path":  "results/base/benchmark/ticks_52_repeat_1",
+                        "files":  9,
+                        "bytes":  177712
+                    },
+                    {
+                        "path":  "results/base/benchmark/ticks_52_repeat_2",
+                        "files":  9,
+                        "bytes":  177712
+                    },
+                    {
+                        "path":  "results/base/benchmark/ticks_52_repeat_3",
+                        "files":  9,
+                        "bytes":  177712
+                    },
+                    {
+                        "path":  "results/base/benchmark/ticks_1480_repeat_1",
+                        "files":  9,
+                        "bytes":  177726
+                    },
+                    {
+                        "path":  "results/base/benchmark/ticks_1480_repeat_2",
+                        "files":  9,
+                        "bytes":  177726
+                    },
+                    {
+                        "path":  "results/base/benchmark/ticks_1480_repeat_3",
+                        "files":  9,
+                        "bytes":  177726
+                    }
+                ],
+    "notes":  [
+                  "Benchmark timing records and logs retained; repeated model snapshots and duplicate endpoints removed",
+                  "Prepared batch_lhs plan and original lhs_256 sampled inputs retained",
+                  "batch_smoke and smoke_lhs were engine-check outputs and their small test design",
+                  "Historical execution commands in provenance retain their original paths",
+                  "Original execution scripts and figure manifest retained under provenance/"
+              ]
+}

@@ -1,0 +1,21 @@
+{
+  "ticks": 1.0,
+  "houses": 2000.0,
+  "poles": 100.0,
+  "initial_formal": 995.0,
+  "initial_informal": 0.0,
+  "initial_unconnected": 1005.0,
+  "mean_income": 10691.904612186978,
+  "mean_demand": 34.1090362559391,
+  "kplc_positive_pct": 40.45,
+  "ipd_positive_pct": 59.35,
+  "cache_mismatch_hookon-limit": 1829.0,
+  "mean_cached_neighbors_hookon-limit": 6.443,
+  "mean_actual_neighbors_hookon-limit": 12.814,
+  "cache_mismatch_r1": 1654.0,
+  "mean_cached_neighbors_r1": 3.0035,
+  "mean_actual_neighbors_r1": 5.97,
+  "cache_mismatch_r2": 1654.0,
+  "mean_cached_neighbors_r2": 3.0035,
+  "mean_actual_neighbors_r2": 5.97
+}

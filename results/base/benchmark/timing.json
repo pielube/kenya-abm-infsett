@@ -1,0 +1,171 @@
+{
+  "started_utc": "2026-11-18T18:59:30.917838+00:00",
+  "definition": "End-to-end wall time: fresh Python runner and JVM, setup, simulation, outputs",
+  "execution": "Sequential; one NetLogo thread per fresh process; seed 42",
+  "requested_repetitions": 3,
+  "environment": {
+    "os": "Windows-10-10.0.26200-SP0",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-1265U",
+    "logical_cpus": 12,
+    "python_version": "3.11.18",
+    "python_executable": "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+    "netlogo_version": "7.0.3"
+  },
+  "model_sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987",
+  "runner_sha256": "811260e5c51ed88479ca05bbf2679a877a2da3b34c75fbd5f30a3e6bfeabbe50",
+  "base_config_sha256": "f4284aa24fcb4e255f1cfe280fd3afb6d579e997175bb7b834239b2016ebd17d",
+  "runs": [
+    {
+      "ticks": 52,
+      "repetition": 1,
+      "wall_seconds": 13.032013099989854,
+      "returncode": 0,
+      "command": [
+        "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+        "C:\\git\\kenya-abm-infsett\\run_model.py",
+        "base",
+        "--steps",
+        "52",
+        "--threads",
+        "1",
+        "--output",
+        "C:\\git\\kenya-abm-infsett\\outputs\\base_publication\\benchmark\\ticks_52_repeat_1"
+      ],
+      "output_directory": "outputs\\base_publication\\benchmark\\ticks_52_repeat_1",
+      "matches_saved_endpoint": true,
+      "endpoint_differences": {},
+      "model_hash_unchanged": true
+    },
+    {
+      "ticks": 52,
+      "repetition": 2,
+      "wall_seconds": 13.615078299975721,
+      "returncode": 0,
+      "command": [
+        "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+        "C:\\git\\kenya-abm-infsett\\run_model.py",
+        "base",
+        "--steps",
+        "52",
+        "--threads",
+        "1",
+        "--output",
+        "C:\\git\\kenya-abm-infsett\\outputs\\base_publication\\benchmark\\ticks_52_repeat_2"
+      ],
+      "output_directory": "outputs\\base_publication\\benchmark\\ticks_52_repeat_2",
+      "matches_saved_endpoint": true,
+      "endpoint_differences": {},
+      "model_hash_unchanged": true
+    },
+    {
+      "ticks": 52,
+      "repetition": 3,
+      "wall_seconds": 13.350182700000005,
+      "returncode": 0,
+      "command": [
+        "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+        "C:\\git\\kenya-abm-infsett\\run_model.py",
+        "base",
+        "--steps",
+        "52",
+        "--threads",
+        "1",
+        "--output",
+        "C:\\git\\kenya-abm-infsett\\outputs\\base_publication\\benchmark\\ticks_52_repeat_3"
+      ],
+      "output_directory": "outputs\\base_publication\\benchmark\\ticks_52_repeat_3",
+      "matches_saved_endpoint": true,
+      "endpoint_differences": {},
+      "model_hash_unchanged": true
+    },
+    {
+      "ticks": 1480,
+      "repetition": 1,
+      "wall_seconds": 30.343209599988768,
+      "returncode": 0,
+      "command": [
+        "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+        "C:\\git\\kenya-abm-infsett\\run_model.py",
+        "base",
+        "--steps",
+        "1480",
+        "--threads",
+        "1",
+        "--output",
+        "C:\\git\\kenya-abm-infsett\\outputs\\base_publication\\benchmark\\ticks_1480_repeat_1"
+      ],
+      "output_directory": "outputs\\base_publication\\benchmark\\ticks_1480_repeat_1",
+      "matches_saved_endpoint": true,
+      "endpoint_differences": {},
+      "model_hash_unchanged": true
+    },
+    {
+      "ticks": 1480,
+      "repetition": 2,
+      "wall_seconds": 30.58739699999569,
+      "returncode": 0,
+      "command": [
+        "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+        "C:\\git\\kenya-abm-infsett\\run_model.py",
+        "base",
+        "--steps",
+        "1480",
+        "--threads",
+        "1",
+        "--output",
+        "C:\\git\\kenya-abm-infsett\\outputs\\base_publication\\benchmark\\ticks_1480_repeat_2"
+      ],
+      "output_directory": "outputs\\base_publication\\benchmark\\ticks_1480_repeat_2",
+      "matches_saved_endpoint": true,
+      "endpoint_differences": {},
+      "model_hash_unchanged": true
+    },
+    {
+      "ticks": 1480,
+      "repetition": 3,
+      "wall_seconds": 32.5324699000048,
+      "returncode": 0,
+      "command": [
+        "C:\\Users\\ucbvplu\\AppData\\Local\\miniforge3\\envs\\kenya-abm\\python.exe",
+        "C:\\git\\kenya-abm-infsett\\run_model.py",
+        "base",
+        "--steps",
+        "1480",
+        "--threads",
+        "1",
+        "--output",
+        "C:\\git\\kenya-abm-infsett\\outputs\\base_publication\\benchmark\\ticks_1480_repeat_3"
+      ],
+      "output_directory": "outputs\\base_publication\\benchmark\\ticks_1480_repeat_3",
+      "matches_saved_endpoint": true,
+      "endpoint_differences": {},
+      "model_hash_unchanged": true
+    }
+  ],
+  "notes": [],
+  "summary": {
+    "52": {
+      "n": 3,
+      "median_seconds": 13.350182700000005,
+      "min_seconds": 13.032013099989854,
+      "max_seconds": 13.615078299975721,
+      "all_seconds": [
+        13.032013099989854,
+        13.615078299975721,
+        13.350182700000005
+      ]
+    },
+    "1480": {
+      "n": 3,
+      "median_seconds": 30.58739699999569,
+      "min_seconds": 30.343209599988768,
+      "max_seconds": 32.5324699000048,
+      "all_seconds": [
+        30.343209599988768,
+        30.58739699999569,
+        32.5324699000048
+      ]
+    }
+  },
+  "finished_utc": "2026-11-18T19:01:45.014618+00:00"
+}

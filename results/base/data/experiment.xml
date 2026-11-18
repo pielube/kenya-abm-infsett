@@ -1,0 +1,125 @@
+<?xml version='1.0' encoding='utf-8'?>
+<experiments>
+  <experiment name="publication_observation" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="false" timeLimit="1480">
+    <setup>publication-setup</setup>
+    <go>publication-go</go>
+    <metrics>
+      <metric>ticks</metric>
+    </metrics>
+    <subExperiments>
+      <subExperiment>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-poles">
+          <value value="100" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="110" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-connection-limit">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connection-limit">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-sd-limit">
+          <value value="4" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="hookon-limit">
+          <value value="3" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-attitude-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-attitude-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="p-switch-cost-only">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="p-switch-attitude">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="p-switch-all-factors">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="p-switch-cost-despite-attitude">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-blackout">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-debt">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-safety">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-demand">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-enforcements">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-satisfaction">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="blackouts-attitude">
+          <value value="&quot;only-hurt-kplc&quot;" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="blackout-mitigation-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="incidents-multiplier">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="incidents-radius">
+          <value value="1" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="a-switch-safety-other">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="r1">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="r2">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="random-seed">
+          <value value="42" />
+        </enumeratedValueSet>
+      </subExperiment>
+    </subExperiments>
+  </experiment>
+</experiments>

@@ -74,6 +74,20 @@ The model's `bau` helper changes some settings and is marked as needing an updat
 The runner uses the explicit base profile instead. Old experiments saved inside
 the model refer to removed variables; the runner generates new experiments.
 
+## Archived base results and figures
+
+The reviewed base outputs are preserved in the Git-tracked
+[results/base archive](../results/base/README.md). It contains the ordinary
+[52-tick run](../results/base/runs/52_ticks/) and
+[1,480-tick run](../results/base/runs/1480_ticks/), their settings and model copies,
+the setup diagnostic, detailed observations, benchmark summaries, figures, and
+numerical figure source data. See [base figures](base-figures.md) for reproduction
+commands and interpretation.
+
+New executions still default to `outputs/base_run/`; base, batch, and smoke
+output folders are ignored scratch space. Use a fresh folder for a new run,
+and preserve reviewed outputs separately in the tracked archive.
+
 ## Run the LHS experiment
 
 The original 256-configuration experiment is already in `outputs/lhs_256/`.
@@ -98,8 +112,9 @@ To run the full existing experiment:
 python run_model.py batch --runs outputs/lhs_256/runs.csv --threads 4 --output outputs/batch_lhs --resume
 ```
 
-This plans **1280 runs of 1480 ticks each** and can take much longer than the base
-run. `--threads 4` runs up to four simulations at once and uses more memory;
+The prepared plan in `outputs/batch_lhs/` contains **1280 runs of 1480 ticks each**;
+`--resume` executes its pending simulations. This can take much longer than the
+base run. `--threads 4` runs up to four simulations at once and uses more memory;
 the default is one. Change `--steps` if a different study duration is intended.
 Each LHS row stays together as one combination of values. The runner uses the
 five existing repeats once, without multiplying them again.
@@ -179,8 +194,9 @@ python -m unittest discover -s tests -v
 ```
 
 These tests cover sampling, input translation, experiment generation, result
-matching, and restarting. They do not launch NetLogo. Real-engine checks during
-setup separately ran the 52-tick base case, two distinct LHS configurations, and
-one base case through 1480 ticks. Repeating the 52-tick case with the same seed
-produced identical results. The full 1280-run experiment was prepared without
-executing its simulations.
+matching, and restarting. They do not launch NetLogo. The archived engine
+benchmarks repeated both the 52-tick base case and the 1,480-tick case three times
+with seed 42 and reproduced the original endpoints. The diagnostic observation
+run also reproduced both endpoints. The full 1,280-run LHS experiment has not
+been executed; its input design remains tracked in `outputs/lhs_256/`, and the
+prepared plan and resolved inputs remain in `outputs/batch_lhs/`.
