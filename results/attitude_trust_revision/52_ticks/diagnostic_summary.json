@@ -1,0 +1,24 @@
+{
+  "steps": 52,
+  "seed": 42,
+  "weekly_observations": 53,
+  "wall_seconds": 53.16814590001013,
+  "logging_enabled": true,
+  "decisions": {
+    "events": 74893,
+    "by_kind": {
+      "access-attempt": 13997,
+      "voluntary-choice": 60208,
+      "forced-disconnection": 688
+    },
+    "by_reason": {
+      "probability-not-selected": 66836,
+      "unconnected-access": 1498,
+      "no-feasible-source": 3154,
+      "voluntary-switch": 2717,
+      "host-loss-voluntary-switch": 623,
+      "enforcement": 65
+    },
+    "successful_events": 4903
+  }
+}

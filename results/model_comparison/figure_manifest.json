@@ -1,0 +1,202 @@
+{
+  "scope": "Controlled rule/probe comparisons and one seed-42 trajectory per model; revised weights uncalibrated",
+  "width_mm": 180,
+  "font": "Arial",
+  "body_pt": 7,
+  "panel_pt": 8,
+  "raster_dpi": 300,
+  "python": "3.11.15",
+  "matplotlib": "3.10.9",
+  "script_sha256": "6aaf3b4935b74092909512e1aa19105923d81d6941e64868262f27ff2822960a",
+  "inputs": [
+    {
+      "path": "results/base/data/aggregate.csv",
+      "sha256": "8ab980a4c08772786a173f393f8835f1a01571564662c579bc6be3bbf2da81ee"
+    },
+    {
+      "path": "results/base/runs/52_ticks/plan.json",
+      "sha256": "e8ffa7d0222b83848bbbae43269f4e11b8094689fb477dc121192a985364d7e2"
+    },
+    {
+      "path": "results/base/runs/52_ticks/model.nlogox",
+      "sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987"
+    },
+    {
+      "path": "results/attitude_trust_revision/1480_ticks/trajectory.csv",
+      "sha256": "5fcb4a6c6f4d5d5019d8b54ecd25a18c80ccd6a20fe6a5c954899a366312ee6f"
+    },
+    {
+      "path": "results/attitude_trust_revision/52_ticks/plan.json",
+      "sha256": "26d186c2ff571799fc248fc44184dcfcd7b45ebbb9debe1822468c7beb500ce6"
+    },
+    {
+      "path": "results/attitude_trust_revision/52_ticks/model.nlogox",
+      "sha256": "90ba10b48cfd5927c6b11004aeb05fb48d66a70d499fe25c3f641e830292e28c"
+    },
+    {
+      "path": "results/attitude_trust_revision/52_ticks/decision_logging.nls",
+      "sha256": "58416e2c49e85256c03c924b2ff62bcbecd6cef7be9d7b785f40f1debea7b238"
+    },
+    {
+      "path": "results/model_comparison/probes/energy.csv",
+      "sha256": "e1b6f2aff19296ff04ef4ea2638d7e59f5d293cf7c5e7f603937e49c0ec616e4"
+    },
+    {
+      "path": "results/model_comparison/probes/neighborhoods.csv",
+      "sha256": "7617477936286ad9c0410532fdbb3b7744bdd1ff215a816d3c3a04ae4588a5dc"
+    },
+    {
+      "path": "results/model_comparison/probes/validation.json",
+      "sha256": "14e6c2b11874a9dc4a1e6a289c0cec4c389a57f6b526adb5ad3f64ee2ac503b7"
+    },
+    {
+      "path": "results/model_comparison/events/weekly_churn.csv",
+      "sha256": "ee4d91053e2dc9cbbf5c3ec4cce40cd59ba1b3b1c9d218629c1de5525c7ec488"
+    },
+    {
+      "path": "results/model_comparison/events/logging_funnel.csv",
+      "sha256": "763976d9f52914944e01b3d66ebb2b75eeb2c389c62795f5717104f588c839b4"
+    },
+    {
+      "path": "results/model_comparison/events/forced_disconnections.csv",
+      "sha256": "3b3f8f87584731da9cb503e0c49fb4e35700efe2a65e1df5926f7dda457226c6"
+    },
+    {
+      "path": "results/model_comparison/events/summary.json",
+      "sha256": "5d62bee559b66a4bdf012b4ab76bc958ecdfe2a6e7baab3080b938a1146a6a15"
+    }
+  ],
+  "figures": [
+    {
+      "name": "01_switching_rule",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "size_mm": [
+        180,
+        150.0
+      ],
+      "caption": "Consistent switching responses replace contradictory conditional probabilities. a\u2013d, Analytical evaluations of the coded rules for the four attitude combinations, conditional on an issue-triggered reconsideration. Positive values mean the alternative is cheaper. The horizontal axis is a unitless ratio to desired monthly electricity spending, not a percentage of the current bill: 1.5 means a saving equal to 150% of that spending reference. Original branches respond only to the sign of the price difference. Filled original symbols at zero show the actual equal-price value; open symbols show the cheaper-side limit. The revised logistic rule responds continuously to savings and respects current- and alternative-provider favorability. In a, the original paradoxically reduces switching from 20% to 0% when the alternative becomes cheaper. Revised cost sensitivity and attitude weight are one, and inertia is 2.2. These are uncalibrated assumptions, not estimated response curves. A selected attempt can still fail if no destination is reachable. Both-positive and both-negative revised responses coincide.",
+      "caption_words": 155,
+      "files": {
+        "pdf": {
+          "bytes": 41951,
+          "sha256": "2de81789dbaf05a335db9d49082e88ef3b5ca454badffe1aed936df87985b2d2"
+        },
+        "svg": {
+          "bytes": 35161,
+          "sha256": "f80aef716d0e5874193745bcf102fac515608691a1b02f3daaf3c3f7bdd8b96f"
+        },
+        "png": {
+          "bytes": 194235,
+          "sha256": "bdc9ddec97c8cf7bfa5b4a713f6e653c63334a19ab8a07ba0068cd7116e36267"
+        },
+        "tiff": {
+          "bytes": 272232,
+          "sha256": "5fe14272649d6b4b61bf886998e73d0b2eeade353d198510d252607e6f7df362"
+        }
+      }
+    },
+    {
+      "name": "02_accounting_corrections",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "size_mm": [
+        180,
+        150.0
+      ],
+      "caption": "Controlled checks demonstrate corrections to load accounting, neighborhoods and informal capacity. a, Fixed weekly demand of 10 kWh below a 20 kWh pole limit. Original reported use is an accumulator, producing false outages at weeks 4, 8 and 12; revised reported use is weekly delivered energy, with no outages. b, Fixed demand of 30 kWh above the same limit. Original outage flags alternate, whereas revised demand remains overloaded. Both energy fixtures hold connections and cash availability fixed and call only blackout and consumption procedures. c, Households with incomplete caches after seed-42 setup; r=2 is the safety radius and r=3 the hook-on radius. Revised caches contain every valid neighbor. d, Isolated informal sources facing 20 kWh weekly demand and a 13 kWh cap: the original hook-on exceeds the cap; the revision applies it consistently. These are exact computational diagnostics, not estimates of real-world reliability. Original accumulated use must not be interpreted as measured weekly delivery.",
+      "caption_words": 154,
+      "files": {
+        "pdf": {
+          "bytes": 46458,
+          "sha256": "72fbdeedf57cb2328b991eb789bd69fca080f5ce88436a045ef62249bf8259ce"
+        },
+        "svg": {
+          "bytes": 34631,
+          "sha256": "7e958a0bc0ce2545ebdf1cf1645f13220a544ff9495d5e463e9f5e28771a67fa"
+        },
+        "png": {
+          "bytes": 166044,
+          "sha256": "84823e4337cdef46d007f80d2ad699e4d43840050139b63d5893b8b709690a01"
+        },
+        "tiff": {
+          "bytes": 222678,
+          "sha256": "73bfff91c41fd95fb7842a09c46cdd921d4502ffbd83381ff5e44a84946f4c4a"
+        }
+      }
+    },
+    {
+      "name": "03_base_run_trajectories",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "size_mm": [
+        180,
+        145.0
+      ],
+      "caption": "The combined revisions change access and attitude trajectories. a,b, Formal and informal household shares; informal combines service drops and hook-ons. c,d, Percentages with positive Boolean attitudes toward KPLC and informal providers. Curves show every recorded week without smoothing; labels give the final observations. Both runs use seed 42, 2,000 households and 100 poles, and begin with identical initial connection counts and attitude shares. The revised model ends with 19.8% formal access compared with 53.35% originally. These are consequences of combined changes in the switching kernel, neighborhoods, load accounting and caps, with uncalibrated revised weights. They do not identify each revision's effect or demonstrate improved empirical accuracy, welfare or equilibrium. A common initial seed does not impose identical subsequent random shocks after the paths diverge. There is one realization per model and no uncertainty band.",
+      "caption_words": 134,
+      "files": {
+        "pdf": {
+          "bytes": 104820,
+          "sha256": "2a84d589f29fe427075df78ce7f5ed3a71198ba99b999610b3094972aea937b1"
+        },
+        "svg": {
+          "bytes": 244585,
+          "sha256": "209cfb6186c832284fc19b9fbda390aee9645ecbd761dc1455547f4f3773b8c5"
+        },
+        "png": {
+          "bytes": 242842,
+          "sha256": "95b3995204e87b0ff5a33e64795ba64ecf727fe6787c37499f6b32c4e97d4069"
+        },
+        "tiff": {
+          "bytes": 263556,
+          "sha256": "4d449d7559a07217aa309487e904466b34ea804a26b6fe2433f76787bf993593"
+        }
+      }
+    },
+    {
+      "name": "04_changes_and_logging",
+      "panels": [
+        "a",
+        "b",
+        "c"
+      ],
+      "size_mm": [
+        180,
+        145.0
+      ],
+      "caption": "Decision logging distinguishes changes that aggregate counters conceal. a, Adjacent-week changes between formal, informal and unconnected states in the first 52 weeks. Original counts come from household transition records; revised counts reconstruct each household's first and last status per week from the event log. Weekly aggregate flows validate the reconstruction. Lower revised turnover is an outcome difference, not itself an improvement in realism. b, Revised evaluated provider choices and informal access opportunities, classified into no attempt, attempted but blocked, and successful connection. Of 3,878 voluntary attempts, 2,717 succeed; 1,161 cannot obtain a source. c, Revised forced losses are recorded separately: 623 dependent households lose a switching host and 65 lose supply through enforcement. The revised log also resolves 157 household-weeks with changes that return to the starting status. Original voluntary/forced event categories are unavailable, not zero. Panels b,c illustrate improved observability, not comparative causal effects. One seed per model; weeks 1\u201352.",
+      "caption_words": 151,
+      "files": {
+        "pdf": {
+          "bytes": 44279,
+          "sha256": "3d131027c55a6fc28bb48592d4a5325ca52067f8e83c90f0c3cdd10feb84ee76"
+        },
+        "svg": {
+          "bytes": 22894,
+          "sha256": "68ce193704eb8f29300386ccba23b769d1780638bf324c7e4d18badd5e6f7463"
+        },
+        "png": {
+          "bytes": 155096,
+          "sha256": "8187913ae8fc074517e665af79aa495a2366462aa409ce6344ff0f9c919c6641"
+        },
+        "tiff": {
+          "bytes": 199634,
+          "sha256": "79820e67d7dfe68aa104f0cce818d14dc9ea46ff589ee071b98cc908e70b6586"
+        }
+      }
+    }
+  ]
+}

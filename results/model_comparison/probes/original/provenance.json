@@ -1,0 +1,25 @@
+{
+  "model": "original",
+  "source_model": "results/base/runs/52_ticks/model.nlogox",
+  "source_sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987",
+  "profile": "experiments/original-base.json",
+  "profile_sha256": "f4284aa24fcb4e255f1cfe280fd3afb6d579e997175bb7b834239b2016ebd17d",
+  "probe_model_sha256": "7e17d74bab0d81aea80f3c33e72f6ae90236e1ce9397efc2b2a73257e93ecfa3",
+  "included_sources": {},
+  "command": [
+    "C:\\git\\kenya-abm-infsett\\.tools\\NetLogo 7.0.3\\NetLogo_Console.exe",
+    "--headless",
+    "--model",
+    "C:\\git\\kenya-abm-infsett\\results\\model_comparison\\probes\\original\\probe_model.nlogox",
+    "--setup-file",
+    "C:\\git\\kenya-abm-infsett\\results\\model_comparison\\probes\\original\\experiment.xml",
+    "--experiment",
+    "comparison_probes",
+    "--table",
+    "C:\\git\\kenya-abm-infsett\\results\\model_comparison\\probes\\original\\behaviorspace.csv",
+    "--threads",
+    "1"
+  ],
+  "wall_seconds": 23.58802980001201,
+  "returncode": 0
+}

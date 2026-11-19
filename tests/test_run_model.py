@@ -11,6 +11,9 @@ import xml.etree.ElementTree as ET
 
 import run_model as runner
 
+ORIGINAL_CONFIG = runner.ROOT / "experiments/original-model.json"
+ORIGINAL_BASE = runner.ROOT / "experiments/original-base.json"
+
 
 class RunnerTests(unittest.TestCase):
     def temporary(self):
@@ -27,7 +30,25 @@ class RunnerTests(unittest.TestCase):
         manifest = self.temporary() / "runs.csv"
         runner.write_csv(manifest, fields, selected)
         shutil.copyfile(source.with_name("parameters.csv"), manifest.with_name("parameters.csv"))
-        return runner.build_plan("batch", runs_path=manifest, steps=52), selected, manifest
+        return runner.build_plan("batch", config_path=ORIGINAL_CONFIG, runs_path=manifest, steps=52), selected, manifest
+
+    def included_model(self):
+        folder = self.temporary()
+        model = folder / "fixture.nlogox"
+        original = runner.ROOT / "results/base/runs/52_ticks/model.nlogox"
+        text = original.read_text(encoding="utf-8").replace(
+            "<code><![CDATA[", '<code><![CDATA[__includes ["lib/first.nls"]]\n', 1)
+        model.write_text(text, encoding="utf-8")
+        library = folder / "lib"
+        library.mkdir()
+        (library / "first.nls").write_text('__includes ["lib/second.nls"]\nto first-procedure\nend\n', encoding="utf-8")
+        (library / "second.nls").write_text("to second-procedure\nend\n", encoding="utf-8")
+        config = runner.read_json(ORIGINAL_CONFIG)
+        config["model"] = str(model)
+        config_path, base_path = folder / "config.json", folder / "base.json"
+        runner.write_json(config_path, config)
+        runner.write_json(base_path, {"steps": 2, "seed": 42, "parameters": {}})
+        return folder, model, config_path, base_path
 
     def attempt(self, plan, output, records, index=1, omit=None, wrong_seed=False, version="7.0.3"):
         mapping = output / f"attempt_{index:03d}_runs.json"
@@ -62,8 +83,79 @@ class RunnerTests(unittest.TestCase):
         for name, value in {"n-households": 2000, "n-poles": 100, "pole-connection-limit": 5,
                             "formal-connection-limit": 5, "informal-sd-limit": 4,
                             "hookon-limit": 3, "formal-connect-fee": 625,
-                            "enforcement-freq": 110}.items():
+                            "enforcement-freq": 110, "choice-cost-sensitivity": 1,
+                            "choice-attitude-weight": 1, "choice-switching-inertia": 2.2}.items():
             self.assertEqual(values[name], value)
+        self.assertFalse(set(values) & runner.LEGACY_CHOICE_INPUTS)
+
+    def test_original_profile_is_explicitly_available(self):
+        plan = runner.build_plan("base", config_path=ORIGINAL_CONFIG, base_path=ORIGINAL_BASE)
+        self.assertEqual(plan["model_path"], str((runner.ROOT / "results/base/runs/52_ticks/model.nlogox").resolve()))
+        self.assertEqual(plan["model_sha256"], "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987")
+        self.assertEqual(plan["runs"][0]["parameters"]["p-switch-cost-only"], 40)
+        self.assertNotIn("choice-cost-sensitivity", plan["runs"][0]["parameters"])
+        self.assertNotIn("model_dependencies", plan)
+
+    def test_legacy_lhs_controls_require_original_model(self):
+        source = runner.ROOT / "outputs/lhs_256/runs.csv"
+        with self.assertRaisesRegex(ValueError, "original-model.json"):
+            runner.build_plan("batch", runs_path=source, limit=1, steps=2)
+
+    def test_choice_weights_are_nonnegative(self):
+        config = runner.read_json(runner.DEFAULT_CONFIG)
+        _, defaults, choices = runner.model_defaults(runner.ROOT / config["model"])
+        for name in runner.CHOICE_WEIGHTS:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "nonnegative"):
+                    runner.resolve_parameters({name: -0.1}, defaults, choices, config)
+                self.assertEqual(runner.resolve_parameters({name: 0}, defaults, choices, config)[name], 0)
+
+    def test_include_parser_ignores_comments_and_string_literals(self):
+        code = 'print "__includes [not-a-declaration]" ; __includes ["ignored.nls"]\n__includes ["lib/a.nls" "b.nls"]'
+        self.assertEqual(runner.included_sources(code), ["lib/a.nls", "b.nls"])
+        for invalid in ('__includes [unquoted.nls]', '__includes ["a.nls"', '__includes ["a.nls"] __includes ["b.nls"]'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                runner.included_sources(invalid)
+
+    def test_include_sources_are_snapshotted_and_protected_on_resume(self):
+        folder, model, config_path, base_path = self.included_model()
+        plan = runner.build_plan("base", config_path=config_path, base_path=base_path)
+        self.assertEqual(set(plan["model_dependencies"]), {"lib/first.nls", "lib/second.nls"})
+        output = runner.prepare(plan, folder / "output")
+        for relative, checksum in plan["model_dependencies"].items():
+            self.assertEqual(runner.digest(output / relative), checksum)
+        (output / "lib/first.nls").write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "included source"):
+            runner.prepare(plan, output, resume=True)
+        runner.copy_model_dependencies(model, output, plan["model_dependencies"])
+        (output / "lib/second.nls").unlink()
+        with self.assertRaisesRegex(ValueError, "included source"):
+            runner.prepare(plan, output, resume=True)
+
+    def test_include_changes_invalidate_plan_and_preparation(self):
+        folder, model, config_path, base_path = self.included_model()
+        plan = runner.build_plan("base", config_path=config_path, base_path=base_path)
+        output = runner.prepare(plan, folder / "output")
+        (folder / "lib/second.nls").write_text("to revised-procedure\nend\n", encoding="utf-8")
+        changed = runner.build_plan("base", config_path=config_path, base_path=base_path)
+        self.assertEqual(plan["model_sha256"], changed["model_sha256"])
+        self.assertNotEqual(plan["fingerprint"], changed["fingerprint"])
+        with self.assertRaises(ValueError):
+            runner.prepare(changed, output, resume=True)
+        with self.assertRaisesRegex(ValueError, "sources changed"):
+            runner.prepare(plan, folder / "late_output")
+
+    def test_include_paths_cannot_escape_or_cycle(self):
+        folder, model, _, _ = self.included_model()
+        source = folder / "lib/first.nls"
+        for value in ("../../outside.nls", str(model.resolve()), "not-source.txt"):
+            source.write_text(f"__includes [{json.dumps(value)}]\n", encoding="utf-8")
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                runner.model_dependencies(model)
+        source.write_text('__includes ["lib/second.nls"]\n', encoding="utf-8")
+        (folder / "lib/second.nls").write_text('__includes ["lib/first.nls"]\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Cyclic"):
+            runner.model_dependencies(model)
 
     def test_aliases_and_category_mapping(self):
         config = runner.read_json(runner.DEFAULT_CONFIG)
@@ -128,7 +220,7 @@ class RunnerTests(unittest.TestCase):
         output = runner.prepare(plan, self.temporary() / "run")
         source[0]["model_seed"] = str(int(source[0]["model_seed"]) + 1)
         runner.write_csv(manifest, source[0].keys(), source)
-        changed = runner.build_plan("batch", runs_path=manifest, steps=52)
+        changed = runner.build_plan("batch", config_path=ORIGINAL_CONFIG, runs_path=manifest, steps=52)
         with self.assertRaises(ValueError):
             runner.prepare(changed, output, resume=True)
         base = runner.build_plan("base")
@@ -211,6 +303,7 @@ class RunnerTests(unittest.TestCase):
     def test_cli_prepares_without_netlogo(self):
         output = self.temporary() / "run"
         command = [sys.executable, str(Path(runner.__file__)), "batch", "--limit", "2",
+                   "--config", str(ORIGINAL_CONFIG),
                    "--steps", "2", "--prepare-only", "--output", str(output),
                    "--netlogo-home", str(output / "not_installed")]
         result = subprocess.run(command, capture_output=True, text=True)

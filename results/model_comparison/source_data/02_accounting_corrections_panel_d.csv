@@ -1,0 +1,5 @@
+model,case,step,capacity_kwh_week,formal_request_kwh_week,direct_request_kwh_week,hook_request_kwh_week,common_capped_request_kwh_week,usage_before_check,fresh_requested_load,usage_after_consumption,overloaded
+original,direct_cap,1,100,0,20,0,13,0,,13,False
+original,hook_cap,1,100,0,0,20,13,0,,20,False
+revised,direct_cap,1,100,0,20,0,13,0,13.0,13,False
+revised,hook_cap,1,100,0,0,20,13,0,13.0,13,False

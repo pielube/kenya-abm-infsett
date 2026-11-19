@@ -1,0 +1,52 @@
+{
+  "seed": 42,
+  "realizations": 1,
+  "households": 2000,
+  "household_snapshots": [
+    0,
+    4,
+    12,
+    24,
+    52,
+    104,
+    220,
+    440,
+    740,
+    1100,
+    1480
+  ],
+  "household_rows": 22000,
+  "household_fields": 28,
+  "final_tick": 1480,
+  "final_status_counts": {
+    "f": 1067,
+    "i": 835,
+    "n": 98
+  },
+  "minimum_realized_monthly_income": 628.1301762931278,
+  "maximum_initial_informal_fee": 499.608275033846,
+  "formal_monthly_installment": 625,
+  "informal_monthly_capacity_kwh": 52,
+  "predicted_cost_comparison": {
+    "0": {
+      "formal_strictly_cheaper": 0,
+      "informal_strictly_cheaper": 2000,
+      "equal_predicted_cost": 0
+    },
+    "52": {
+      "formal_strictly_cheaper": 0,
+      "informal_strictly_cheaper": 2000,
+      "equal_predicted_cost": 0
+    },
+    "1480": {
+      "formal_strictly_cheaper": 312,
+      "informal_strictly_cheaper": 1688,
+      "equal_predicted_cost": 0
+    }
+  },
+  "cumulative_nonpayment_disconnects": {
+    "kplc": 0,
+    "ipd": 0
+  },
+  "interpretation": "Descriptive within-realization associations, not independent or causal attitude effects. Final attitudes, expenses, remaining installments and connection states have evolved jointly."
+}

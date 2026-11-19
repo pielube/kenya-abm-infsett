@@ -1,5 +1,9 @@
 # Keep model bytes unchanged so saved checksums work on every operating system.
 *.nlogox -text
+*.nls -text
 
 # Preserve archived data, figures, and provenance checksums across platforms.
 results/base/** -text -whitespace
+results/attitude_trust_review/** -text -whitespace
+results/attitude_trust_revision/** -text -whitespace
+results/model_comparison/** -text -whitespace

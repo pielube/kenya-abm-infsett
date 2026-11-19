@@ -21,10 +21,6 @@
     "init-attitude-ipd": 60,
     "init-attitude-kplc": 40,
     "debt-threshold": 10,
-    "p-switch-cost-only": 40,
-    "p-switch-attitude": 10,
-    "p-switch-all-factors": 50,
-    "p-switch-cost-despite-attitude": 20,
     "a-switch-blackout": 50,
     "a-switch-debt": 50,
     "a-switch-safety": 50,
@@ -37,6 +33,9 @@
     "incidents-radius": 1,
     "a-switch-safety-other": 50,
     "r1": 2,
-    "r2": 2
+    "r2": 2,
+    "choice-cost-sensitivity": 1,
+    "choice-attitude-weight": 1,
+    "choice-switching-inertia": 2.2
   }
 }

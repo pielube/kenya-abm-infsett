@@ -1,0 +1,27 @@
+{
+  "command": [
+    "C:\\git\\kenya-abm-infsett\\.tools\\NetLogo 7.0.3\\NetLogo_Console.exe",
+    "--headless",
+    "--model",
+    "C:\\git\\kenya-abm-infsett\\results\\attitude_trust_revision\\1480_ticks\\model.nlogox",
+    "--setup-file",
+    "C:\\git\\kenya-abm-infsett\\results\\attitude_trust_revision\\1480_ticks\\attempt_001.xml",
+    "--experiment",
+    "python_runs",
+    "--table",
+    "C:\\git\\kenya-abm-infsett\\results\\attitude_trust_revision\\1480_ticks\\attempt_001.csv",
+    "--threads",
+    "1"
+  ],
+  "wall_seconds": 52.210427999991225,
+  "returncode": 0,
+  "model_sha256": "90ba10b48cfd5927c6b11004aeb05fb48d66a70d499fe25c3f641e830292e28c",
+  "model_dependencies": {
+    "decision_logging.nls": "58416e2c49e85256c03c924b2ff62bcbecd6cef7be9d7b785f40f1debea7b238"
+  },
+  "decision_logging": false,
+  "seed": 42,
+  "steps": 1480,
+  "script_sha256": "72bd89bfeb8c2367201cbdf5952cd1ef709b976efe91917706dc214c5fc3b057",
+  "logging_scope": "Evaluated issue-triggered provider choices, informal access attempts and forced disconnections; setup assignment is excluded. Experience reasons co-occur and do not identify individual causal effects."
+}

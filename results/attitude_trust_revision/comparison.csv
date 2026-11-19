@@ -1,0 +1,17 @@
+ticks,metric,original,revised
+52,formal_households,578.0,206.0
+52,informal_households,1254.0,1599.0
+52,unconnected_households,168.0,195.0
+52,trust_kplc_pct,8.6,23.45
+52,trust_ipd_pct,39.1,24.45
+52,mean_debt,2.5717948836214113,9.266039300877631
+52,mean_switchcount,6.886,2.1075
+52,overloaded_poles,35.0,22.0
+1480,formal_households,1067.0,396.0
+1480,informal_households,835.0,1506.0
+1480,unconnected_households,98.0,98.0
+1480,trust_kplc_pct,32.4,24.4
+1480,trust_ipd_pct,40.6,32.8
+1480,mean_debt,2.176891601313411,51.516387946112836
+1480,mean_switchcount,130.391,32.3115
+1480,overloaded_poles,29.0,20.0

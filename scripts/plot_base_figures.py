@@ -26,6 +26,10 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Publication figures below describe the archived original, not branch revisions.
+ORIGINAL_MODEL = ROOT / "results/base/runs/52_ticks/model.nlogox"
+ORIGINAL_BASE = ROOT / "experiments/original-base.json"
+ORIGINAL_CONFIG = ROOT / "experiments/original-model.json"
 MM = 1 / 25.4
 COLORS = {"Formal": "#0072B2", "Service drop": "#D55E00", "Hook-on": "#CC79A7", "Unconnected": "#A5A5A5"}
 KPLC, IPD = COLORS["Formal"], COLORS["Service drop"]
@@ -313,7 +317,7 @@ def save_outputs(output, data):
     source = output / "source_data"
     figures.mkdir(parents=True, exist_ok=True)
     source.mkdir(parents=True, exist_ok=True)
-    manifest = {"seed": 42, "replicates": 1, "width_mm": 180, "font": "Arial", "body_font_pt": 7, "panel_font_pt": 8, "raster_dpi": 300, "python": platform.python_version(), "matplotlib": matplotlib.__version__, "pandas": pd.__version__, "plot_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "input_sha256": {filename: hashlib.sha256((data / filename).read_bytes()).hexdigest() for filename in ["aggregate.csv", "households.csv", "poles.csv", "transitions.csv"]}, "figures": []}
+    manifest = {"seed": 42, "replicates": 1, "model_role": "original-archived-base", "model_sha256": hashlib.sha256(ORIGINAL_MODEL.read_bytes()).hexdigest(), "base_profile_sha256": hashlib.sha256(ORIGINAL_BASE.read_bytes()).hexdigest(), "width_mm": 180, "font": "Arial", "body_font_pt": 7, "panel_font_pt": 8, "raster_dpi": 300, "python": platform.python_version(), "matplotlib": matplotlib.__version__, "pandas": pd.__version__, "plot_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "input_sha256": {filename: hashlib.sha256((data / filename).read_bytes()).hexdigest() for filename in ["aggregate.csv", "households.csv", "poles.csv", "transitions.csv"]}, "figures": []}
     with PdfPages(figures / "base_model_extended_data.pdf", metadata={"Title": "Base model diagnostic figures", "Subject": "Seed 42; single realization"}) as combined:
         for name, fig in FIGURES:
             fig.canvas.draw()
@@ -352,7 +356,7 @@ def save_outputs(output, data):
                 archive.write(path, filename)
         for filename in ["aggregate.csv", "households.csv", "poles.csv", "income_quintiles.csv", "transitions.csv", "links.csv", "observer_patch.diff", "data_integrity.json"]:
             archive.write(data / filename, f"data/{filename}")
-        for relative in ["scripts/benchmark_base.py", "scripts/collect_base_diagnostics.py", "scripts/plot_base_figures.py", "requirements-figures.txt", "run_model.py", "models/kenya_informal_settlements.nlogox", "experiments/base.json", "experiments/model.json", "results/base/runs/52_ticks/results.csv", "results/base/runs/1480_ticks/results.csv", "docs/base-model-guide.md", "docs/base-figures.md"]:
+        for relative in ["scripts/benchmark_base.py", "scripts/collect_base_diagnostics.py", "scripts/plot_base_figures.py", "requirements-figures.txt", "run_model.py", "results/base/runs/52_ticks/model.nlogox", "experiments/original-base.json", "experiments/original-model.json", "results/base/runs/52_ticks/results.csv", "results/base/runs/1480_ticks/results.csv", "docs/base-model-guide.md", "docs/base-figures.md"]:
             archive.write(ROOT / relative, f"code/{relative}")
         for directory in [output / "runs", output / "setup", output / "provenance"]:
             if directory.exists():
@@ -407,7 +411,7 @@ def write_report(output, data, a, h, p, transitions):
 Fresh processes ran sequentially, headlessly, with one NetLogo thread and seed 42. Wall time includes Python and JVM startup, compilation, setup, simulation, and output writing. These are execution repeats of the same stochastic realization, not independent random seeds. All six endpoints reproduced the saved reference results. Hardware: {timing['environment']['cpu']}; NetLogo {timing['environment']['netlogo_version']}. Exact timings and environment details are in [timing.json](benchmark/timing.json)."""
     report = f"""# Base model runtime and diagnostic figures
 
-Four candidate Extended Data figures describe the existing seed-42 base model over its full 1,480-tick horizon. They combine weekly observations, selected household cross-sections, and a diagnostic of the implemented outage process. One tick is approximately one model week; financial routines use four-week months.
+Four candidate Extended Data figures describe the archived original seed-42 base model over its full 1,480-tick horizon. They combine weekly observations, selected household cross-sections, and a diagnostic of the implemented outage process. One tick is approximately one model week; financial routines use four-week months. Reproduction uses `results/base/runs/52_ticks/model.nlogox` and `experiments/original-base.json`; subsequent branch revisions do not replace those inputs.
 
 ## Runtime
 
@@ -453,7 +457,7 @@ Source model SHA256: `{provenance['source_sha256']}`. Each plotting input and th
     (output / "report.md").write_text(report, encoding="utf-8")
 
 
-def validate_data(data, a, h, p, transitions):
+def validate_data(data, a, h, p, transitions, write_audit=True):
     assert list(a.tick) == list(range(1481))
     assert np.all(a.formal_households + a.informal_households + a.unconnected_households == a.households)
     assert np.all(a[ACCESS_COLUMNS].sum(axis=1) == a.households)
@@ -478,13 +482,14 @@ def validate_data(data, a, h, p, transitions):
         frame = h[h.tick == tick]
         for status, column in [("f", "formal_households"), ("i", "informal_households"), ("n", "unconnected_households")]:
             assert (frame.status == status).sum() == row[column]
-    source = ROOT / "models/kenya_informal_settlements.nlogox"
+    source = ORIGINAL_MODEL
     provenance = json.loads((data / "provenance.json").read_text())
     assert hashlib.sha256(source.read_bytes()).hexdigest() == provenance["source_sha256"]
     checks = {"passed": True, "aggregate_ticks": len(a), "pole_rows": len(p), "household_rows": len(h), "quintile_rows": len(q), "transition_rows": len(transitions), "checks": ["Consecutive ticks 0 through 1480", "100 poles and five 400-household quintiles per tick", "2000 households per selected snapshot", "Fixed household locations, incomes and demands", "Adjacent transition origin and destination totals match states", "Quintile and aggregate pre-switch outage exposure agree"], "source_sha256": provenance["source_sha256"]}
-    (data / "data_integrity.json").write_text(json.dumps(checks, indent=2) + "\n", encoding="utf-8")
-    patch = difflib.unified_diff(source.read_text(encoding="utf-8").splitlines(keepends=True), (data / "observed_model.nlogox").read_text(encoding="utf-8").splitlines(keepends=True), fromfile="models/kenya_informal_settlements.nlogox", tofile="observed_model.nlogox", n=2)
-    (data / "observer_patch.diff").write_text("".join(patch), encoding="utf-8")
+    if write_audit:
+        (data / "data_integrity.json").write_text(json.dumps(checks, indent=2) + "\n", encoding="utf-8")
+        patch = difflib.unified_diff(source.read_text(encoding="utf-8").splitlines(keepends=True), (data / "observed_model.nlogox").read_text(encoding="utf-8").splitlines(keepends=True), fromfile="results/base/runs/52_ticks/model.nlogox", tofile="observed_model.nlogox", n=2)
+        (data / "observer_patch.diff").write_text("".join(patch), encoding="utf-8")
 
 
 def main():

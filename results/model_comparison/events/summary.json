@@ -1,0 +1,75 @@
+{
+  "seed": 42,
+  "realizations": 1,
+  "weeks": 52,
+  "households": 2000,
+  "household_week_pairs": 104000,
+  "original_observed_net_status_changes": 14188,
+  "revised_observed_net_status_changes": 4523,
+  "original_mean_weekly_status_change_pct": 13.642307692307693,
+  "revised_mean_weekly_status_change_pct": 4.349038461538462,
+  "revised_status_change_events": 4903,
+  "revised_within_week_return_to_start_household_weeks": 157,
+  "revised_additional_intermediate_status_changes": 380,
+  "evaluated_events": 74893,
+  "logging_funnel": [
+    {
+      "event_kind": "voluntary-choice",
+      "evaluated": 60208,
+      "attempted": 3878,
+      "successful": 2717,
+      "blocked": 1161,
+      "not_attempted": 56330,
+      "attempt_pct_of_evaluated": 6.441004517672071,
+      "success_pct_of_attempted": 70.06188757091284
+    },
+    {
+      "event_kind": "access-attempt",
+      "evaluated": 13997,
+      "attempted": 3491,
+      "successful": 1498,
+      "blocked": 1993,
+      "not_attempted": 10506,
+      "attempt_pct_of_evaluated": 24.941058798313925,
+      "success_pct_of_attempted": 42.91034087653967
+    }
+  ],
+  "forced_disconnections": [
+    {
+      "reason": "host-loss-voluntary-switch",
+      "events": 623
+    },
+    {
+      "reason": "enforcement",
+      "events": 65
+    },
+    {
+      "reason": "nonpayment-kplc",
+      "events": 0
+    },
+    {
+      "reason": "nonpayment-ipd",
+      "events": 0
+    },
+    {
+      "reason": "host-loss-nonpayment",
+      "events": 0
+    }
+  ],
+  "checks": [
+    "Consecutive event IDs and ordered ticks",
+    "Every household's pre-state equals its preceding post-state",
+    "Event counts match retained validation",
+    "All 2000 inferred initial household states match setup totals",
+    "Original transition margins match adjacent aggregate states",
+    "Revised event net flows match adjacent aggregate states at every week",
+    "All revised status-changing events agree with successful event totals"
+  ],
+  "limits": [
+    "One seed-42 realization with several model changes combined; differences do not identify individual mechanism effects.",
+    "Adjacent-week status changes include access and forced losses, not only voluntary provider switching.",
+    "Original data do not identify corresponding voluntary/forced event counts; absent original categories must not be plotted as zero.",
+    "Statuses f/i/n omit changes between informal service drops and hook-ons.",
+    "Lower churn is an outcome difference, not evidence of improved empirical realism or household welfare."
+  ]
+}

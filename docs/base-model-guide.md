@@ -4,7 +4,7 @@ The model explores how households obtain and change electricity access when form
 
 This purpose is inferred from the implemented rules. The model's Info tab contains an unfilled template, including its credits and references. The supplied files do not establish an empirical calibration, a particular settlement map, or a validated prediction for Kenya. The model is best read as an experimental representation of these mechanisms until that supporting evidence is supplied.
 
-The reference implementation is [kenya_informal_settlements.nlogox](../models/kenya_informal_settlements.nlogox), saved in NetLogo 7.0.3. The explicit base configuration is [base.json](../experiments/base.json). The description below follows active code where comments disagree with it.
+This guide describes the **archived original model**, whose [NetLogo source](../results/base/runs/52_ticks/model.nlogox) is saved in NetLogo 7.0.3. Its explicit base configuration is [original-base.json](../experiments/original-base.json). The descriptions and line references below concern that original source, following executable rules where comments disagree. The working model has since changed; see [model revisions](model-revision.md).
 
 ## Aim and questions the model can explore
 
@@ -179,7 +179,7 @@ The `bau` helper is marked as needing an update. It uses an enforcement interval
 
 ## Existing base results
 
-The source model and archived model copies in `results/base/runs/52_ticks/` and `results/base/runs/1480_ticks/` share SHA256 `859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987`, matching [source.json](../models/source.json). Both executions use seed 42 and identical parameter values, with horizons of 52 and 1,480 ticks. Their saved runner versions differ. The [base results archive](../results/base/README.md) also preserves the later diagnostic observations and publication figures.
+The archived original model copies in `results/base/runs/52_ticks/` and `results/base/runs/1480_ticks/` share SHA256 `859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987`, recorded in the original-source provenance in [source.json](../models/source.json). Both executions use seed 42 and identical parameter values, with horizons of 52 and 1,480 ticks. Their saved runner versions differ. The [base results archive](../results/base/README.md) also preserves the later diagnostic observations and publication figures.
 
 | Recorded result | At tick 52 | At tick 1,480 |
 | --- | --- | --- |
@@ -219,7 +219,7 @@ The NetLogo interface already contains plots of access, attitudes, cost advantag
 - `nearby-houses` is cached while households are being created and positioned. A real-engine setup check confirmed that later position changes leave valid neighbors missing. At base seed 42, 1,829 of 2,000 households have an incomplete cache within hook-on radius 3; mean valid cached neighbor count is 6.443, compared with 12.814 actual neighbors. Within the incident and attitude radius 2, 1,654 households have incomplete caches; mean cached count is 3.0035 versus 5.970 actual neighbors. Hook-on searches and safety effects therefore operate on incomplete spatial neighborhoods. Direct pole searches do not use this cache.
 - The blackout chooser includes other scenarios, but their labels do not always fully describe the branch logic. In `hurt-both-providers`, formal customers can lose KPLC attitude and informal customers can lose IPD attitude; an informal household does not directly lose both attitudes in that branch. Mitigation scenarios change issue and attitude handling, without providing explicit replacement electricity.
 - All policy-intervention scenarios are commented out. The present base case includes routine enforcement but no later trust campaign, capacity expansion, or scenario change.
-- The 19 embedded BehaviorSpace experiments contain legacy variable names and should not be treated as current executable experiment definitions. The Python runner generates experiments from [model.json](../experiments/model.json) instead.
+- The 19 embedded BehaviorSpace experiments contain legacy variable names and should not be treated as executable experiment definitions. The Python runner generates original-model experiments from [original-model.json](../experiments/original-model.json) instead.
 
 The setup diagnostic used the unchanged model, all base parameters, and seed 42. Its experiment called `setup` followed by an inert `tick`, rather than the model's `go`, so its results file reports tick 1 while its household attributes and connections describe setup before any model dynamics. The [diagnostic provenance](../results/base/setup/provenance.json) records exact reporters, source hash, and execution details; [named diagnostic results](../results/base/setup/diagnostics.json) include the initial state and cache comparisons.
 
@@ -248,5 +248,5 @@ Line numbers refer to the unchanged source model described above.
 | Initial income cutoff | `wealthy-potential-connections`, line 770 |
 | Cost comparison helpers | Reporters beginning at lines 778, 783, 790, and 798 |
 | Interface and saved defaults | Widgets beginning at line 848 |
-| Exported metrics | [experiments/model.json](../experiments/model.json) |
-| Experiment generation and final-only recording | [run_model.py](../run_model.py), `experiment_xml`, line 174 |
+| Exported original metrics | [experiments/original-model.json](../experiments/original-model.json) |
+| Original experiment generation and final-only recording | [Archived run_model.py](../results/base/provenance/scripts_used/run_model.py), `experiment_xml`, line 174 |

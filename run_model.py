@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
@@ -17,6 +18,9 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = ROOT / "experiments/model.json"
 DEFAULT_BASE = ROOT / "experiments/base.json"
 IDS = ("run_id", "sample_id", "replicate", "model_seed")
+LEGACY_CHOICE_INPUTS = frozenset(("p-switch-cost-only", "p-switch-attitude",
+                                 "p-switch-all-factors", "p-switch-cost-despite-attitude"))
+CHOICE_WEIGHTS = ("choice-cost-sensitivity", "choice-attitude-weight", "choice-switching-inertia")
 
 
 def read_json(path):
@@ -56,9 +60,100 @@ def model_defaults(path):
     return root.attrib["version"], values, choices
 
 
+def included_sources(code):
+    """Read a NetLogo __includes declaration, ignoring comments and string content."""
+    tokens = re.findall(r';[^\r\n]*|"(?:\\.|[^"\\])*"|\[|\]|[^\s\[\]";]+', code)
+    tokens = [token for token in tokens if not token.startswith(";")]
+    positions = [i for i, token in enumerate(tokens) if token.lower() == "__includes"]
+    if len(positions) > 1:
+        raise ValueError("NetLogo __includes may occur only once in each source file")
+    if not positions:
+        return []
+    index = positions[0] + 1
+    if index >= len(tokens) or tokens[index] != "[":
+        raise ValueError("NetLogo __includes must contain a list of quoted relative file paths")
+    paths = []
+    index += 1
+    while index < len(tokens) and tokens[index] != "]":
+        token = tokens[index]
+        if not token.startswith('"'):
+            raise ValueError("NetLogo __includes paths must be quoted strings")
+        try:
+            paths.append(json.loads(token))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid quoted path in NetLogo __includes") from exc
+        index += 1
+    if index == len(tokens):
+        raise ValueError("Unclosed NetLogo __includes declaration")
+    return paths
+
+
+def model_dependencies(model_path):
+    """Hash included .nls sources, preserving their layout below the model folder.
+
+    NetLogo resolves includes relative to the main model's directory, also when
+    the declaration occurs in an included file. Sources must stay within both
+    the main model's folder and the repository, including after
+    resolving symbolic links. Cycles are rejected rather than silently truncated.
+    """
+    model_path = Path(model_path).resolve()
+    model_folder = model_path.parent
+    dependencies, visiting, visited = {}, set(), set()
+
+    def visit(source, code):
+        visiting.add(source)
+        for value in included_sources(code):
+            relative = Path(value)
+            if not value or relative.is_absolute() or re.match(r"^[A-Za-z]:", value) or value.startswith(("/", "\\")):
+                raise ValueError(f"Included source must use a relative path: {value!r}")
+            included = (model_folder / relative).resolve()
+            if not included.is_relative_to(model_folder) or not included.is_relative_to(ROOT.resolve()):
+                raise ValueError(f"Included source escapes the model folder or repository: {value!r}")
+            if included.suffix.lower() != ".nls":
+                raise ValueError(f"Included source must be a .nls file: {value!r}")
+            if included in visiting:
+                raise ValueError(f"Cyclic NetLogo __includes declaration: {value!r}")
+            if included in visited:
+                continue
+            dependencies[included.relative_to(model_folder).as_posix()] = digest(included)
+            visit(included, included.read_text(encoding="utf-8-sig"))
+        visiting.remove(source)
+        visited.add(source)
+
+    code = ET.parse(model_path).getroot().findtext("code") or ""
+    visit(model_path, code)
+    return dict(sorted(dependencies.items()))
+
+
+def copy_model_dependencies(model_path, destination, expected=None):
+    """Copy and verify included source files next to a model snapshot."""
+    model_path = Path(model_path).resolve()
+    destination = Path(destination).resolve()
+    dependencies = model_dependencies(model_path)
+    if expected is not None and dependencies != expected:
+        raise ValueError("Included model sources changed while preparing the experiment")
+    for relative, checksum in dependencies.items():
+        target = (destination / relative).resolve()
+        if not target.is_relative_to(destination):
+            raise ValueError(f"Included snapshot path escapes the output folder: {relative!r}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(model_path.parent / relative, target)
+        if digest(target) != checksum:
+            raise ValueError(f"Included model source changed while copying: {relative}")
+    return dependencies
+
+
 def resolve_parameters(overrides, defaults, choices, config):
     """Translate the original table's names and labels to the model's inputs."""
     resolved, seen = dict(defaults), set()
+    retired = sorted(set(overrides) & LEGACY_CHOICE_INPUTS - set(defaults))
+    if retired:
+        raise ValueError(
+            "Legacy switching controls do not apply to the revised choice model: "
+            + ", ".join(retired)
+            + ". For the original LHS design use --config experiments/original-model.json; "
+              "for the archived base also use --base experiments/original-base.json. "
+              "Generate a new input design to explore the revised choice controls.")
     for original, value in overrides.items():
         name = config["aliases"].get(original, original)
         if name not in defaults or name in seen:
@@ -80,6 +175,9 @@ def resolve_parameters(overrides, defaults, choices, config):
         raise ValueError("enforcement-number must be a whole number between 0 and n-poles")
     if resolved["min-informal-fee"] > resolved["max-informal-fee"]:
         raise ValueError("min-informal-fee cannot exceed max-informal-fee")
+    for name in CHOICE_WEIGHTS:
+        if name in resolved and resolved[name] < 0:
+            raise ValueError(f"{name} must be nonnegative")
     return resolved
 
 
@@ -165,6 +263,9 @@ def build_plan(mode, config_path=DEFAULT_CONFIG, base_path=DEFAULT_BASE,
             "runner_sha256": digest(__file__),
             "model_sha256": digest(model), "config": config, "sources": sources,
             "steps": steps, "runs": rows}
+    dependencies = model_dependencies(model)
+    if dependencies:
+        plan["model_dependencies"] = dependencies
     plan["fingerprint"] = hashlib.sha256(
         json.dumps(plan, sort_keys=True, allow_nan=False).encode("utf-8")
     ).hexdigest()
@@ -209,11 +310,16 @@ def prepare(plan, output, resume=False):
             raise ValueError("Cannot resume: model, settings, or inputs changed. Use a new output folder.")
         if digest(output / "model.nlogox") != plan["model_sha256"]:
             raise ValueError("The saved model snapshot changed; use a new output folder")
+        for relative, checksum in plan.get("model_dependencies", {}).items():
+            included = (output / relative).resolve()
+            if not included.is_relative_to(output) or not included.is_file() or digest(included) != checksum:
+                raise ValueError(f"The saved included source changed or is missing: {relative}; use a new output folder")
     else:
         output.mkdir(parents=True)
         shutil.copyfile(plan["model_path"], output / "model.nlogox")
         if digest(output / "model.nlogox") != plan["model_sha256"]:
             raise ValueError("The source model changed while preparing the experiment")
+        copy_model_dependencies(plan["model_path"], output, plan.get("model_dependencies", {}))
         write_json(output / "plan.json", plan)
         fields = [*IDS, *plan["runs"][0]["parameters"]]
         write_csv(output / "inputs.csv", fields,

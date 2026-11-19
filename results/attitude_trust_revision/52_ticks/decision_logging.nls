@@ -1,0 +1,159 @@
+; Opt-in decision and connection-event logging.
+;
+; Required declarations in the including model:
+; globals [ decision-log-enabled? decision-log-path decision-log-event-id ]
+; houses-own [ decision-log-issues ]
+;
+; The including model records issue labels at the point each issue occurs and
+; resets them once per week. These labels describe co-occurring experiences,
+; not identified causal effects of an individual experience on a decision.
+
+to decision-log-start [destination]
+  if decision-log-enabled? = true [
+    error "A decision log is already open; call decision-log-stop first."
+  ]
+  if not is-string? destination [ error "Decision log destination must be a string." ]
+  if empty? destination [ error "Decision log destination must not be empty." ]
+  if file-exists? destination [ error (word "Decision log already exists: " destination) ]
+  with-local-randomness [
+    set decision-log-path destination
+    set decision-log-event-id 0
+    file-open decision-log-path
+    file-print csv:to-row decision-log-header
+    file-flush
+    set decision-log-enabled? true
+  ]
+end
+
+to decision-log-stop
+  if decision-log-enabled? = true [
+    with-local-randomness [
+      file-open decision-log-path
+      file-flush
+      file-close
+      set decision-log-enabled? false
+    ]
+  ]
+end
+
+to decision-log-flush
+  if decision-log-enabled? = true [
+    with-local-randomness [
+      file-open decision-log-path
+      file-flush
+    ]
+  ]
+end
+
+to decision-log-reset-issues
+  set decision-log-issues []
+end
+
+to decision-log-add-issue [experience]
+  if not is-list? decision-log-issues [ set decision-log-issues [] ]
+  if not member? experience decision-log-issues [
+    set decision-log-issues lput experience decision-log-issues
+  ]
+end
+
+to-report decision-log-context [alternative-status formal-options informal-options]
+  ; Household reporter: capture this before any choice, link deletion, or move.
+  ; Counts describe reachable supply offers, not necessarily distinct firms.
+  if decision-log-enabled? != true [ report [] ]
+  let captured []
+  with-local-randomness [
+    let experiences []
+    if is-list? decision-log-issues [ set experiences decision-log-issues ]
+    let relative-cost-advantage ""
+    let attitude-difference ""
+    if (member? connection-status ["f" "i"]) and (member? alternative-status ["f" "i"]) [
+      let current-cost ifelse-value (connection-status = "f") [next-month-formal-cost] [next-month-informal-cost]
+      let alternative-cost ifelse-value (alternative-status = "f") [next-month-formal-cost] [next-month-informal-cost]
+      let current-attitude ifelse-value (connection-status = "f") [attitude-kplc] [attitude-ipd]
+      let alternative-attitude ifelse-value (alternative-status = "f") [attitude-kplc] [attitude-ipd]
+      set relative-cost-advantage (current-cost - alternative-cost) / max (list desired-max-expense 1)
+      set attitude-difference (ifelse-value alternative-attitude [1] [0]) - (ifelse-value current-attitude [1] [0])
+    ]
+    set captured (list
+      ticks who xcor ycor connection-status decision-log-access-type
+      income HH-budget desired-max-expense expense spend-ratio debt
+      demand tariff next-month-formal-cost next-month-informal-cost
+      attitude-kplc attitude-ipd (issues-this-tick = true)
+      (decision-log-join experiences) (switched-this-tick = true)
+      alternative-status formal-options informal-options
+      decision-log-source-id decision-log-source-pole-id
+      installments-remaining times-installment-not-paid times-ipd-not-paid
+      weeks-continuous-informal choice-cost-sensitivity choice-attitude-weight
+      choice-switching-inertia relative-cost-advantage attitude-difference)
+  ]
+  report captured
+end
+
+to decision-log-event [kind reason stage captured probability draw target-id attempted? success?]
+  ; Household command: write exactly one evaluated decision or realized event.
+  ; -1 means not applicable for probability/draw/target. Numeric probability
+  ; and draw are in percent units. Logging never makes a behavioral draw.
+  if decision-log-enabled? = true [
+    with-local-randomness [
+      if length captured != 35 [ error "Invalid pre-event decision-log context." ]
+      set decision-log-event-id decision-log-event-id + 1
+      let row sentence (list decision-log-event-id kind reason stage) captured
+      set row sentence row (list probability draw target-id attempted? success?
+        connection-status decision-log-access-type
+        decision-log-source-id decision-log-source-pole-id
+        HH-budget expense attitude-kplc attitude-ipd)
+      file-open decision-log-path
+      file-print csv:to-row row
+    ]
+  ]
+end
+
+to-report decision-log-header
+  report (list
+    "event_id" "event_kind" "reason" "stage"
+    "decision_tick" "household_id" "x" "y" "status_before" "access_before"
+    "income" "cash_before" "desired_monthly_spending" "monthly_expense_before"
+    "spending_ratio_before" "spending_pressure_before"
+    "monthly_demand_kwh" "tariff" "formal_predicted_monthly_cost"
+    "informal_predicted_monthly_cost" "attitude_kplc_before" "attitude_ipd_before"
+    "issues_before" "issue_reasons" "switched_this_tick_before"
+    "alternative_status" "feasible_formal_sources" "feasible_informal_sources"
+    "source_id_before" "source_pole_id_before" "installments_remaining"
+    "missed_formal_installments" "missed_informal_fees" "informal_tenure_weeks"
+    "choice_cost_sensitivity" "choice_attitude_weight" "choice_switching_inertia"
+    "relative_cost_advantage" "attitude_difference"
+    "probability_pct" "random_draw_pct" "target_id" "attempted" "success"
+    "status_after" "access_after" "source_id_after" "source_pole_id_after"
+    "cash_after" "monthly_expense_after" "attitude_kplc_after" "attitude_ipd_after")
+end
+
+to-report decision-log-access-type
+  if any? my-formal-connections [ report "formal" ]
+  if any? my-informal-sds [ report "service_drop" ]
+  if any? my-in-informal-hookons [ report "hookon" ]
+  report "unconnected"
+end
+
+to-report decision-log-source-id
+  if any? my-formal-connections [ report [who] of first sort in-formal-connection-neighbors ]
+  if any? my-informal-sds [ report [who] of first sort in-informal-sd-neighbors ]
+  if any? my-in-informal-hookons [ report [who] of first sort in-informal-hookon-neighbors ]
+  report -1
+end
+
+to-report decision-log-source-pole-id
+  if any? my-formal-connections [ report [who] of first sort in-formal-connection-neighbors ]
+  if any? my-informal-sds [ report [who] of first sort in-informal-sd-neighbors ]
+  if any? my-in-informal-hookons [
+    let host first sort in-informal-hookon-neighbors
+    if any? [in-formal-connection-neighbors] of host [
+      report [who] of first sort [in-formal-connection-neighbors] of host
+    ]
+  ]
+  report -1
+end
+
+to-report decision-log-join [values]
+  if empty? values [ report "" ]
+  report reduce [ [left-value right-value] -> (word left-value "|" right-value) ] values
+end

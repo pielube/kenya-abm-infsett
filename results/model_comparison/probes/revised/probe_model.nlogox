@@ -1,0 +1,3495 @@
+<?xml version='1.0' encoding='utf-8'?>
+<model version="NetLogo 7.0.3" snapToGrid="false">
+  <code>; Suggestions for speeding up
+;; Instead of links, have state variables for houses and poles to indicate what they're linked to. 
+;;;; DONE Lighter lift version of that: instead have a state variable for each house that says whether they're formal, informal, hookon, or none. THIS IS PROMISING
+     ;;; Testing: there are 192 houses that have no connections but have a connection status of "n"
+;;;; DONE Change "in-radius search-radius" to "with [distance myself &lt;= search-radius]". Good for lots of agents and small radius
+
+; Changes to consider
+;; Disconnection for formal vs informal: is there justification for having them different?
+
+; Extensions
+extensions [ profiler sound csv ]
+__includes [ "decision_logging.nls" ]
+
+; Two breeds, houses and poles
+breed [ houses house ]
+breed [ poles pole ]
+
+; Helper global variables during calibration
+globals [ max-income count-disconnect-kplc count-disconnect-ipd count-negotiate
+  decision-log-enabled? decision-log-path decision-log-event-id ]
+
+; Household variables.
+; Demand is monthly electricity demand in kWh. Demand-per-unit-income is used to set up and vary demand by income.
+; Income is total household income
+; Expense is HH expenditure on electricity monthly
+; Income is the portion of monthly income allocated to electricity
+; HH-budget is the household's budget for electricity use that month, which can accrue month-to-month up to a limit
+; Switchcount, switched-this-tick, issues-this-tick are helper variables to track switching frequency, ensure households don't switch provider more than once per tick, and trigger switching consideration
+; Tariff is the tariff level a household is charged, based on demand. installments-remaining tracks how many months left a household has on its loan to pay off the formal connection fee. 
+; Informal-flat-fee is the monthly fee charged to informal service drop and informal hookon customers, which scales with income.
+houses-own [ demand demand-per-unit-income income HH-budget expense desired-expense-pct desired-max-expense spend-ratio debt nearby-houses connection-status
+  switchcount switched-this-tick issues-this-tick cant-afford decision-log-issues
+  tariff installments-remaining informal-flat-fee
+; These attitude variables track attitude towards KPLC and towards informal power distributors (IPDs).
+; times-installment-not-paid tracks nonpayment of the one-time formal connection fee, spread over 24 months. Times-ipd-not-paid tracks nonpayment of the informal-flat-fee.
+  attitude-kplc times-installment-not-paid attitude-ipd times-ipd-not-paid weeks-continuous-informal ]
+
+; Number of informal connections at any given time, including hook-ons and SDs
+; Number of formal connections at any given time
+; pole-overloaded gives the overloaded status at any given point
+; pole-capacity is the maximum weekly kWh capacity of a pole.
+; pole-demand is this week's requested load after cash/connection limits, before outages.
+; pole-usage is electricity actually delivered this week; it is zero during an outage.
+poles-own [ number-informal-connections number-formal-connections pole-overloaded pole-capacity pole-demand pole-usage ]
+
+; Breeds for connection types. 
+; Formal-connections exist between poles and houses, informal service drops between poles and houses,
+; informal hook-ons between houses, and pole-connections between poles.
+directed-link-breed [ formal-connections formal-connection ]
+
+directed-link-breed [ informal-sds informal-sd ]
+
+directed-link-breed [ informal-hookons informal-hookon ]
+
+directed-link-breed [ pole-connections pole-connection ]
+
+; Formal connection variables. 
+; Overloaded means the maximum capacity of the pole the connection is connected to has been exceeded
+; Formal-usage is the formal kWh consumption of the formal connection per week
+formal-connections-own [ overloaded ]
+
+; Informal connection variables. 
+; Same definition for overloaded. Informal-usage is the kWh consumption of an informal connection (service drop or hook-on) per week
+informal-sds-own [ overloaded ]
+informal-hookons-own [ overloaded ]
+
+; Setup functions
+; Clear-all resets the model
+; Model creates n-households houses, with random coordinates
+; Shapes, colors and initial variables are set up. Income set to be gamma-distributed, with a mean around 400 KES/month. Mean-income is calculated.
+; Demand per unit income is a floor, plus a value normally distributed around 0.1 (SD = 0.02)
+; Demand is then calculated based on income, minimum demand, and DPUI
+; savings-pct scales with income, the logic being that wealthier households can save a higher fraction of income
+; Tariff (for a formal connection) is set based on demand. Informal-flat-fee scales with income with a floor of 200 KES/month
+; Initialize switchcount, weeks-satisfactory variables, times-ipd-not-paid, and issues-this-tick
+; Initialize attitude-kplc with an average of 40 and a relatively large standard deviation (15) to reflect overall poor attitudes towards KPLC with variability
+; Initialize attitude-ipd with an average of 60 and a relatively small standard deviation (10) to reflect overall positive attitudes towards IPD with variability
+; Asks one patch with a house on it to add a pole, then extends the network from that pole 69 times to achieve majority but not total service coverage
+; Sets the max capacity per month of the poles in kWh
+; Resets ticks
+to setup
+  decision-log-stop
+  clear-all
+  if (choice-cost-sensitivity &lt; 0 or choice-attitude-weight &lt; 0 or choice-switching-inertia &lt; 0) [
+    error "Choice sensitivities and switching inertia must be nonnegative."
+  ]
+
+  ; random-seed 0
+  
+  let max-radius max ( list hookon-limit r1 r2 ) ; radius effects from e.g. blackouts
+  
+  create-houses n-households [
+    set xcor random-xcor set ycor random-ycor
+    ;set shape "house"
+    set shape "dot"
+    set color white
+    set income min-income + random-gamma 2 0.0002
+    set HH-budget income
+    set demand-per-unit-income random-normal 0.003 0.0003
+    set demand min-demand + ( income * demand-per-unit-income )
+    set informal-flat-fee min-informal-fee + random-float (max-informal-fee - min-informal-fee)
+    set switchcount 0
+    set times-ipd-not-paid 0
+    set issues-this-tick false
+    decision-log-reset-issues
+    set connection-status "n"
+    set installments-remaining 24
+    ifelse random-float 100 &lt; init-attitude-kplc [ set attitude-kplc true ] [ set attitude-kplc false ]
+    ifelse random-float 100 &lt; init-attitude-ipd [ set attitude-ipd true ] [ set attitude-ipd false ]
+    set cant-afford 0
+  ]
+
+  ; Cache only after every household has its final position. This read-only
+  ; initialization must not consume random numbers used to build the network.
+  with-local-randomness [
+    ask houses [
+      set nearby-houses other houses with [ distance myself &lt;= max-radius ]
+    ]
+  ]
+  
+  set max-income max [income] of houses
+  
+  ask houses [
+    set desired-expense-pct ( ln (max-income + 100 - income) / 180) ; Natural log of the max income (plus a buffer) minus HH income, so that higher-income households spend less on electricity as a percentage of income
+    set desired-max-expense desired-expense-pct * income 
+    ifelse demand &lt;= 30 [ 
+      set tariff 23 ] [ ; elec price lifeline tariff
+      set tariff 28 ] ; elec price
+  ]
+
+  ask one-of patches with [ count houses-here != 1 ] [ add-a-pole ]
+
+  ask patches with [ any? poles-here ] [
+    repeat (n-poles - 1) [
+      build-network
+    ]
+  ]
+  
+  reset-ticks
+end
+
+; Go procedures
+; Stop at 1480 weekly ticks. The archived original used the same active limit.
+; Reset tracking variables
+to go
+  ;profiler:start                                 ;; start profiling
+  if ticks = 1480 [  
+    ;profiler:stop 
+    ;csv:to-file "order1.csv" profiler:data 
+    ;profiler:reset 
+    stop
+  ]
+  ask houses [
+    set issues-this-tick false
+    decision-log-reset-issues
+    set switched-this-tick false
+    ]
+  earn-income-budget ; monthly
+  policy-intervention
+  negotiate ; monthly
+  monthly-billing ; monthly
+  blackouts ; classify this week's load after fixed payments, before consumption
+  per-week ; weekly
+  safety-incidents
+  service-satisfaction
+  add-drop-connections
+  switch-connections
+  enforcement-actions
+  ask informal-houses with [ switched-this-tick = false ] [ 
+    set weeks-continuous-informal weeks-continuous-informal + 1
+  ]
+  colors
+  tick
+  
+end
+
+
+
+
+; ``````````````````````````````````````````` SETUP PROCEDURES `````````````````````````````````````````````````
+
+;; Extension logic. Finds patches without any poles within radius of a current pole
+;; Targets set to unserviced, which are houses with no poles in radius
+;; Sums number of houses in range of the candidates, adds a new pole at the location with the most unserviced houses in range
+to build-network
+
+  let candidates patches with [ not any? poles-here and count poles in-radius pole-connection-limit != 0 ]
+
+  let targets houses with [ count poles in-radius formal-connection-limit = 0 ]
+
+  ask one-of candidates with-max [ sum [ income ] of targets in-radius formal-connection-limit ] [
+      add-a-pole
+    ]
+  
+  ask houses with [ connection-status = "f" ] [
+    set installments-remaining random 24
+    set times-installment-not-paid random 6
+  ]
+
+end
+
+;; Pole extension. 
+;; Makes a new pole, sets color, size, shape and max capacity
+;; Makes a pole connection to the nearest other pole if there is one
+;; Then establishes new formal connections
+to add-a-pole
+  
+  sprout-poles 1 [
+    set color green
+    set size 2
+    set shape "dot"
+    set pole-capacity pole-max-capacity
+    set pole-demand 0
+    set pole-usage 0
+    set pole-overloaded false
+    let nearest-network-point min-one-of other poles [ distance myself ]
+    if nearest-network-point != nobody [
+      create-pole-connection-to nearest-network-point [
+        set color green
+        set thickness 0.3
+      ]
+    ]
+    establish-connections
+  ]
+  
+end
+
+; One-time setup to establish formal connections. Only connects to wealthier households
+; Sets the parameters of the new formal connections. Green and not overloaded
+to establish-connections
+  
+  create-formal-connections-to wealthy-potential-connections [
+    set color green
+    set overloaded false
+  ]
+  ask out-formal-connection-neighbors [ set connection-status "f" ]
+  
+end
+
+
+; ``````````````````````````````````````````` FIRST LEVEL PROCEDURES `````````````````````````````````````````````````
+; These are the procedures called by the "Go" command to run the simulation
+; They sometimes call other procedures, which are econd-level procedures. Those are defined later in the code.
+
+
+; Earn income, add it to HH-budget
+; Once households reach a certain level of debt from a connection, they get fed up with that provider and become distrusful of them.
+to earn-income-budget
+  
+  if ticks mod 4 = 0 [
+    ask houses [
+      set HH-budget income
+      set expense 0
+      if debt &gt; debt-threshold [
+        ( ifelse 
+          connection-status = "i" [ if random 100 &lt; a-switch-debt [ set attitude-ipd false ] ]
+          connection-status = "f" [ if random 100 &lt; a-switch-debt [ set attitude-kplc false ] ]
+        )
+      ]
+    ]
+  ]
+  
+end
+
+
+to policy-intervention
+  
+  ; Scenario: ENF. Comment out for other scenarios
+;  if ticks = 300 [
+;    set enforcement-freq 24
+;    set enforcement-number 15
+;  ]
+  
+
+;  if ticks = 300 [
+  ; Scenario: TRUST and BACKFIRE. Comment out for other scenarios
+;    ask houses [
+;      if random-float 100 &lt; 10 [set attitude-kplc true ] ; 10% of HHs affected
+;    ]
+  ; Scenario: BACKFIRE. Comment out for other scenarios
+;    set informal-sd-limit 5
+;    set hookon-limit 4
+;  ]
+  
+  ; Scenario: GRID. Comment out for other scenarios
+;  if ticks = 300 [
+;    ask poles [
+;      set pole-capacity 200
+;    ]
+;  ] 
+  
+end
+
+
+; Estimate current-week load without using last week's outage flags. Formal
+; demand is limited by cash remaining after fixed payments; both informal link
+; types obey the same per-household connection cap. An overloaded pole supplies
+; no electricity this week, but its requested load remains available separately.
+to blackouts
+  
+  ask poles [
+    with-local-randomness [
+      set pole-usage 0
+      let formal-load sum [ formal-weekly-load ] of out-formal-connection-neighbors
+      let direct-informal-load sum [ informal-weekly-load ] of out-informal-sd-neighbors
+      let hookon-load sum [ sum [ informal-weekly-load ] of out-informal-hookon-neighbors ] of out-formal-connection-neighbors
+      set pole-demand formal-load + direct-informal-load + hookon-load
+    ]
+    ifelse pole-demand &gt; pole-capacity [
+      set color magenta
+      set pole-overloaded true
+      ask my-formal-connections [ set overloaded true ]
+      ask out-formal-connection-neighbors [
+        ask my-out-informal-hookons [ set overloaded true ]
+      ]
+      ask my-informal-sds [ set overloaded true ]
+    ] [
+      set color green
+      set pole-overloaded false
+      ask my-formal-connections [ set overloaded false ]
+      ask my-informal-sds [ set overloaded false ]
+      ask out-formal-connection-neighbors [
+        ask my-out-informal-hookons [ set overloaded false ]
+      ]
+    ]
+  ]
+  
+end
+
+; Requested weekly use before pole outages. These reporters are household-only.
+to-report formal-weekly-load
+  report min (list (max (list (demand / 4) 0)) ((max (list HH-budget 0)) / tariff))
+end
+
+to-report informal-weekly-load
+  report min (list (max (list (demand / 4) 0)) informal-connection-capacity)
+end
+
+
+; On a monthly basis, ngotiate for a lower flat fee. Odds of success increase with every subsequent month with an informal supplier
+to negotiate
+  
+  if ticks mod 4 = 0 [
+    ; houses with an informal connection that have a positive attitude toward the IPD will try and negotiate for a lower fee
+    ask houses with [ connection-status = "i" and spend-ratio &gt; 1 ] [ 
+      if informal-flat-fee &gt; min-informal-fee and random-float 100 &lt; weeks-continuous-informal / 4 [ ; longer relationships are more likely to have mutual trust
+        let new-fee informal-flat-fee - 10
+        set informal-flat-fee max list min-informal-fee new-fee
+        set count-negotiate count-negotiate + 1
+      ]
+    ]
+  ]
+  
+end
+
+; Procedure operates every 4 ticks (~1 month)
+; Electricity expense function sets HH-budget to income, and demand as above based on new DPUI value
+; formally-connected houses that aren't bypassed pay their electricity bill if they can, otherwise pay as much as they can and increment their times-dissatisfied-formal counter. Then the usage values of the formal links are set (in kWh)
+; Bypassed houses do not pay for electricity, but set their bypassed-usage to their expense, to simulate the electricity stolen from the network
+; Formally-connected houses then have their satisfaction set based on whether they've been able to afford their electricity bill. This means meter-bypass houses are always happy, but there's other ways they can become unsatisfied
+; Illegally-connected houses check whether the illegal connection can meet their demand, and set their expense and illegal-usage of their connection accordingly. If their demand is less than the capacity of the connection, they're satisfied
+; However, if any formal connections are actually overloaded, then the expense is set to 0, as are the formal-usage, illegal-usage and bypassed-usage of the connections
+; After this, the revenue from the system is added to the installation budget
+; Note that for households that have recently gotten a new connection, they don't pay the flat fees until the first of the month
+to monthly-billing
+
+  if ticks mod 4 = 0 [
+    
+    ; Formal connections that ...
+    ask houses with [ connection-status = "f" ] [
+      ; ... CAN be afforded: pay the connection fee
+      ( ifelse HH-budget &gt;= this-month-connect-fee [
+        set expense expense + this-month-connect-fee
+        set HH-budget ( HH-budget - expense )    
+        set installments-remaining max ( list ( installments-remaining - 1 ) 0 )
+        ; Can't be afforded: increase times connection fee not paid 
+      ] [
+        set times-installment-not-paid times-installment-not-paid + 1
+      ] )
+    ]
+    
+;     ; Households with both a formal and informal connection
+;     ask houses with [ count my-formal-connections = 1 and count my-informal-sds = 1 ] [
+;       ; Can afford all, or can't afford formal, or can't afford either
+;       ( ifelse HH-budget &gt;= this-month-connect-fee + informal-flat-fee [
+;         set expense expense + this-month-connect-fee + informal-flat-fee
+;         set HH-budget ( HH-budget - expense )
+;         ] HH-budget &gt;= informal-flat-fee [
+;         ; Can afford flat fee but can't pay the monthly connection fee; will choose to pay the informal fee first because that is where they get their electricity from
+;         set expense expense + informal-flat-fee
+;         set HH-budget ( HH-budget - expense )
+;         set times-installment-not-paid times-installment-not-paid + 1
+;         ] HH-budget &gt;= this-month-connect-fee [
+;         ; Can afford the connection fee but not the informal flat fee
+;         set expense expense + this-month-connect-fee
+;         set HH-budget ( HH-budget - expense )
+;         set times-ipd-not-paid times-ipd-not-paid + 1
+;         ] [
+;         ; Can't afford flat fee or monthly connection fee
+;         set times-installment-not-paid times-installment-not-paid + 1
+;         set times-ipd-not-paid times-ipd-not-paid + 1
+;       ] )
+;     ]
+  
+    ; HHs with only an informal connection, either service drop or hook-on
+    ask houses with [ connection-status = "i" ] [
+      ; checking budget
+      ifelse HH-budget &gt;= informal-flat-fee [
+        ; These connections be afforded: pay the flat fee
+        set expense expense + informal-flat-fee
+        set HH-budget ( HH-budget - expense )
+      ] [
+        ; These connections cannot be afforded: don't pay anything but approach threshold for disconnection
+        set times-ipd-not-paid times-ipd-not-paid + 1
+      ]
+    ]
+  ]
+  
+end
+
+
+; Per-week activities: electricity use, update running expenses, experience issues
+; Calculate expense on pay-per-use formal electricity and issues per timestep
+to per-week
+  
+  ; Houses with only a formal, non-overloaded connection
+  ask houses with [ count my-formal-connections with [ overloaded = false ] = 1 ] [
+      
+    ( ifelse HH-budget &gt;= per-timestep-electricity-bill 
+      ; ... Can afford to meet demand
+      [
+        set expense expense + per-timestep-electricity-bill
+        set HH-budget ( HH-budget - per-timestep-electricity-bill )   
+        let link-usage ( per-timestep-electricity-bill / tariff )
+        ask in-formal-connection-neighbors [ set pole-usage pole-usage + link-usage ] ; pole usage updated
+      ] 
+      [
+        ; ... Can't afford to meet all demand
+        set expense expense + HH-budget
+        let link-usage max list ( HH-budget / tariff ) 0
+        ask in-formal-connection-neighbors [ set pole-usage pole-usage + link-usage ] ; pole usage updated
+        set HH-budget 0
+        if random 100 &lt; a-switch-demand [ set attitude-kplc false ] 
+        decision-log-add-issue "formal-demand-shortfall"
+        set issues-this-tick true
+        set cant-afford cant-afford + 1
+      ] )
+    ]
+  
+  
+  ; Households with an informal connection which are not overloaded, either informal service drop or incoming hookon
+  ask non-overloaded-informal-houses [
+    let link-usage demand / 4
+    ; Households whose connections allow them to use the amount they want
+    ifelse link-usage &lt;= informal-connection-capacity [
+      ask in-informal-sd-neighbors [ set pole-usage pole-usage + link-usage ]
+      ask in-informal-hookon-neighbors [
+        ask in-formal-connection-neighbors [ set pole-usage pole-usage + link-usage ]
+      ]
+    ] [
+      ; Households that can't use all the electricity they want
+      ask in-informal-sd-neighbors [ set pole-usage pole-usage + informal-connection-capacity ]
+      ask in-informal-hookon-neighbors [
+        ask in-formal-connection-neighbors [ set pole-usage pole-usage + informal-connection-capacity ]
+      ]
+      if random 100 &lt; a-switch-demand [ set attitude-ipd false ] 
+      decision-log-add-issue "informal-capacity-shortfall"
+      set issues-this-tick true
+    ]
+  ]
+  
+  
+  ;; Overloaded households can't use electricity and are dissatisfied
+  
+  ; HHs with formal connections that are overloaded, and their hook-ons, have no usage. Attitude changes depend on the value of blackouts-attitude
+  ask houses with [ count my-formal-connections with [ overloaded = true ] = 1 ] [
+    if random 100 &lt; a-switch-blackout [ set attitude-kplc false ] 
+    decision-log-add-issue "blackout" set issues-this-tick true
+    ask out-informal-hookon-neighbors [
+      ( ifelse 
+      blackouts-attitude = "only-hurt-kplc" [ if random 100 &lt; a-switch-blackout [ set attitude-kplc false ] decision-log-add-issue "blackout" set issues-this-tick true ] ; ebw - the logic being that the official infrastructure can't support them
+      blackouts-attitude = "hurt-both-providers" [ if random 100 &lt; a-switch-blackout [ set attitude-ipd false ] decision-log-add-issue "blackout" set issues-this-tick true ]
+      blackouts-attitude = "ipd-partial-mitigation" [
+        ; only households that don't get help from IPDs experience issues and the chance of an attitude switch
+        if random 100 &gt; blackout-mitigation-pct [
+          if random 100 &lt; a-switch-blackout [ set attitude-ipd false ]
+          decision-log-add-issue "blackout" set issues-this-tick true
+          ]
+        ]
+      blackouts-attitude = "ipd-full-mitigation" [ ]
+    )
+    ]
+  ]
+    
+  ; HHs with informal service drops that are overloaded have no usage and are dissatisfied
+  ask houses with [ count my-informal-sds with [ overloaded = true ] = 1 ] [
+    ( ifelse 
+      blackouts-attitude = "only-hurt-kplc" [ if random 100 &lt; a-switch-blackout [ set attitude-kplc false ] decision-log-add-issue "blackout" set issues-this-tick true ] ; ebw - the logic being that the official infrastructure can't support them
+      blackouts-attitude = "hurt-both-providers" [ if random 100 &lt; a-switch-blackout [ set attitude-ipd false ] decision-log-add-issue "blackout" set issues-this-tick true ]
+      blackouts-attitude = "ipd-partial-mitigation" [
+        ; only households that don't get help from IPDs experience issues and the chance of an attitude switch
+        if random 100 &gt; blackout-mitigation-pct [
+          if random 100 &lt; a-switch-blackout [ set attitude-ipd false ]
+          decision-log-add-issue "blackout" set issues-this-tick true
+          ]
+        ]
+      blackouts-attitude = "ipd-full-mitigation" [ ]
+    )
+  ]
+ 
+  
+  ; Calculate cumulative expenses as a ratio of desired expense level
+  ask houses [
+    set spend-ratio expense / desired-max-expense
+    if spend-ratio &gt; 1 [
+      decision-log-add-issue "spending-pressure"
+      set issues-this-tick true
+      set debt debt + (spend-ratio - 1)
+    ]  ; set a satisfaction-related parameter . Could be if debt (cumulative excess in spend ratio) is over an amount, the chance of switching provider is virtually guaranteed
+  ]
+  
+end
+
+; Safety incidents (electrocutions) occur with informal connections that are not overloaded. They are more likely to occur the higher the concentration of informal connections
+to safety-incidents
+  ask non-overloaded-informal-houses [
+    let n-nearby-informal-houses count nearby-houses with [ connection-status = "i" and distance myself &lt;= r1 ]
+    let incidents-chance ( n-nearby-informal-houses * incidents-multiplier )
+    if random 100 &lt; incidents-chance [
+      decision-log-add-issue "safety-incident"
+      set issues-this-tick true
+      if random 100 &lt; a-switch-safety [ set attitude-ipd false ]
+      ask nearby-houses with [ distance myself &lt;= r2 ] [
+        if random 100 &lt; a-switch-safety-other [ set attitude-ipd false ]
+      ]
+    ]
+  ]
+end
+
+
+; Every satisfactory week a chance of changing (improving) household attitude towards the current provider
+; ebw consider having satisfaction change in relation to 
+;   a) how many satisfactory weeks there have been, 
+;   b) how many continuous satisfactory weeks there have been, or 
+;   c) proportion of recent weeks that have been satisfactory
+to service-satisfaction
+  
+  ask houses with [ connection-status = "f" and issues-this-tick = false ] [
+    if random 100 &lt; a-switch-satisfaction [ set attitude-kplc true ]
+  ]
+  ask houses with [ connection-status = "i" and issues-this-tick = false ] [
+    if random 100 &lt; a-switch-satisfaction [ set attitude-ipd true ]
+  ]
+  
+end
+
+
+; Logic for new connections and changing connection types
+; Houses with informal connections that haven't paid the IPD at least once will be disconnected at a rate of 30% per week
+; Houses with a formal connection that haven't paid the connection fee installment at least 6 times will be disconnected automatically
+; Unconnected houses get an informal connection at 25% per week, if they are in range
+to add-drop-connections
+  ask informal-houses with [ times-ipd-not-paid != 0 and switched-this-tick = false ] [
+    if random 100 &lt; 30 [
+      let captured decision-log-context "n" -1 -1
+      ask my-informal-sds [die]
+      ask my-informal-hookons [die]
+      set count-disconnect-ipd count-disconnect-ipd + 1
+      set switchcount switchcount + 1
+      set connection-status "n"
+      set switched-this-tick true
+      set color gray
+      decision-log-event "forced-disconnection" "nonpayment-ipd" "add-drop-connections" captured -1 -1 -1 false true
+    ]
+  ]
+  ask houses with [connection-status = "f" and times-installment-not-paid &gt; 5 and switched-this-tick = false] [
+    let captured decision-log-context "n" -1 -1
+    ask out-informal-hookon-neighbors [
+      let dependent-context decision-log-context "n" -1 -1
+      set switchcount switchcount + 1
+      set connection-status "n"
+      set switched-this-tick true
+      set color gray
+      ask my-in-informal-hookons [die]
+      decision-log-event "forced-disconnection" "host-loss-nonpayment" "add-drop-connections" dependent-context -1 -1 -1 false true
+    ]
+    ask my-formal-connections [die]
+    set count-disconnect-kplc count-disconnect-kplc + 1
+    set switchcount switchcount + 1
+    set connection-status "n"
+    set switched-this-tick true
+    set color gray
+    decision-log-event "forced-disconnection" "nonpayment-kplc" "add-drop-connections" captured -1 -1 -1 false true
+  ]
+  ; Preserve the original access rule: only informal entry, including same-week
+  ; re-entry after disconnection. The log records both events separately.
+  ask houses with [connection-status = "n"] [
+    let formal-options feasible-formal-poles
+    let informal-options feasible-informal-poles
+    let hookon-options feasible-hookon-houses
+    let captured decision-log-context "i" (count formal-options) (count informal-options + count hookon-options)
+    let draw random-float 100
+    let attempted? draw &lt; 25
+    if attempted? [switch-to-informal]
+    let success? attempted? and connection-status = "i"
+    let target-id ifelse-value success? [decision-log-source-id] [-1]
+    let reason ifelse-value success? ["unconnected-access"] [ifelse-value attempted? ["no-feasible-source"] ["probability-not-selected"]]
+    decision-log-event "access-attempt" reason "add-drop-connections" captured 25 draw target-id attempted? success?
+  ]
+end
+
+  
+; Weekly procedure: households that experienced an issue this tick and that haven't already switched provider consider switching provider, based on attitude towards the two providers
+to switch-connections
+  ask houses with [ connection-status = "f" and issues-this-tick = true and switched-this-tick = false ] [
+    consider-provider-switch "i"
+  ]
+  ask houses with [ connection-status = "i" and issues-this-tick = true and switched-this-tick = false ] [
+    consider-provider-switch "f"
+  ]
+end
+
+; Probability is a propensity to attempt a switch, conditional on an issue.
+; A draw may still fail to produce access when no destination is reachable.
+to consider-provider-switch [alternative]
+  let formal-options feasible-formal-poles
+  let informal-options feasible-informal-poles
+  let hookon-options feasible-hookon-houses
+  let captured decision-log-context alternative (count formal-options) (count informal-options + count hookon-options)
+  let current-cost ifelse-value (connection-status = "f") [next-month-formal-cost] [next-month-informal-cost]
+  let alternative-cost ifelse-value (alternative = "f") [next-month-formal-cost] [next-month-informal-cost]
+  let current-positive? ifelse-value (connection-status = "f") [attitude-kplc] [attitude-ipd]
+  let alternative-positive? ifelse-value (alternative = "f") [attitude-kplc] [attitude-ipd]
+  let probability provider-switch-probability current-cost alternative-cost current-positive? alternative-positive? desired-max-expense
+  let draw random-float 100
+  let attempted? draw &lt; probability
+  if attempted? [
+    ifelse alternative = "f" [switch-to-formal] [switch-to-informal]
+  ]
+  let success? attempted? and connection-status = alternative
+  let target-id ifelse-value success? [decision-log-source-id] [-1]
+  let reason ifelse-value success? ["voluntary-switch"] [ifelse-value attempted? ["no-feasible-source"] ["probability-not-selected"]]
+  decision-log-event "voluntary-choice" reason "switch-connections" captured probability draw target-id attempted? success?
+end
+
+; Dimensionless, uncalibrated initial specification. Price savings are scaled
+; by desired monthly spending (the existing reference, not a new cash budget).
+; Cost and alternative approval increase switching; current approval/inertia
+; decrease it. Stable logistic evaluation avoids exp overflow at extreme costs.
+to-report provider-switch-probability [current-cost alternative-cost current-positive? alternative-positive? reference-budget]
+  let cost-advantage (current-cost - alternative-cost) / max (list reference-budget 1)
+  let attitude-advantage (ifelse-value alternative-positive? [1] [0]) - (ifelse-value current-positive? [1] [0])
+  let score (choice-cost-sensitivity * cost-advantage + choice-attitude-weight * attitude-advantage - choice-switching-inertia)
+  ifelse score &gt;= 0 [
+    report 100 / (1 + exp (0 - score))
+  ] [
+    let exponential exp score
+    report 100 * exponential / (1 + exponential)
+  ]
+end
+
+; These sets are shared by choice logging and connection creation. Counts are
+; supply sources, not distinct provider firms. Original reach restrictions stay.
+to-report feasible-formal-poles
+  report poles with [distance myself &lt;= formal-connection-limit]
+end
+
+to-report feasible-informal-poles
+  report poles with [distance myself &lt;= informal-sd-limit and
+    count my-formal-connections with [overloaded = true] + count my-informal-sds with [overloaded = true] = 0]
+end
+
+to-report feasible-hookon-houses
+  report nearby-houses with [distance myself &lt;= hookon-limit and count my-formal-connections with [overloaded = false] = 1]
+end
+
+
+; Enforcement actions
+; Finds the n poles with the most informal connections (using enforcement-number), either directly to the pole or hook-on connections. Removes all informal connections to that pole.
+to enforcement-actions
+  ask poles [
+    let hookon-connections sum [count my-informal-hookons] of formal-connection-neighbors
+    set number-informal-connections count my-informal-sds + hookon-connections
+    set number-formal-connections count my-formal-connections
+  ]
+  if ticks mod enforcement-freq = 0 [
+    let target-poles max-n-of enforcement-number poles [number-informal-connections]
+    ask target-poles [
+      ask out-informal-sd-neighbors [
+        let captured decision-log-context "n" -1 -1
+        set color gray
+        set connection-status "n"
+        if random 100 &lt; a-switch-enforcements [set attitude-kplc false]
+        ask my-informal-sds [die]
+        decision-log-event "forced-disconnection" "enforcement" "enforcement-actions" captured -1 -1 -1 false true
+      ]
+      ask formal-connection-neighbors [
+        ask informal-hookon-neighbors [
+          let captured decision-log-context "n" -1 -1
+          set color gray
+          set connection-status "n"
+          if random 100 &lt; a-switch-enforcements [set attitude-kplc false]
+          ask my-informal-hookons [die]
+          decision-log-event "forced-disconnection" "enforcement" "enforcement-actions" captured -1 -1 -1 false true
+        ]
+      ]
+    ]
+    ask poles [
+      let hookon-connections sum [count my-informal-hookons] of formal-connection-neighbors
+      set number-informal-connections count my-informal-sds + hookon-connections
+      set number-formal-connections count my-formal-connections
+    ]
+  ]
+end
+
+
+; Colors for visual identification. Formally-connected houses blue, hooked-on houses light pink, illegal service drops red.
+; Overloaded connections used to be in magenta but it became visually overwhelming with the amount of overloading that happens
+to colors
+  
+  ; House colors based on type of connection
+  ask houses with [ connection-status = "f" ] [
+    set color blue
+  ]
+  ask houses with [ count my-in-informal-hookons != 0 ] [
+    set color 19
+  ]
+  ask houses with [ count my-informal-sds != 0 ] [
+    set color red 
+  ]
+  
+  ask formal-connections [
+;    ( ifelse overloaded = true [
+;      set color magenta
+;    ] [
+;      set color green
+;    ] )
+    set color green
+  ]
+  
+  ask informal-sds [
+;    ifelse overloaded = true [
+;      set color magenta
+;    ] [
+;      set color red
+;    ]
+    set color red
+  ]
+  
+  ask informal-hookons [
+;    ifelse overloaded = true [
+;      set color magenta
+;    ] [
+;      set color 19
+;    ]
+    set color 19
+  ]
+  
+end
+
+; ```````````````````````````````````  SECOND LEVEL PROCEDURES `````````````````````````````````````
+; These are the procedures that are called by the first-level procedures
+
+; Household switches to informal
+to switch-to-informal
+  let nearest-pole min-one-of feasible-informal-poles [distance myself]
+  let hookon-neighbor min-one-of feasible-hookon-houses [distance myself]
+  if nearest-pole != nobody or hookon-neighbor != nobody [
+    ask out-informal-hookon-neighbors [
+      let dependent-context decision-log-context "n" -1 -1
+      set connection-status "n"
+      ask my-in-informal-hookons [die]
+      decision-log-event "forced-disconnection" "host-loss-voluntary-switch" "switch-to-informal" dependent-context -1 -1 -1 false true
+    ]
+    ask my-formal-connections [die]
+    ifelse nearest-pole != nobody [
+      create-informal-sd-from nearest-pole [set overloaded false]
+    ] [
+      create-informal-hookon-from hookon-neighbor [set overloaded false]
+    ]
+    set times-ipd-not-paid 0
+    set switchcount switchcount + 1
+    set switched-this-tick true
+    set weeks-continuous-informal 0
+    set debt 0
+    set connection-status "i"
+  ]
+end
+
+; Household switches to formal
+to switch-to-formal
+  let nearby-poles feasible-formal-poles
+  let nearest-pole min-one-of nearby-poles [ distance myself ]
+  
+  if nearest-pole != nobody [
+    create-formal-connection-from nearest-pole [
+      set color green
+      set thickness 0.1
+      set overloaded false
+    ]
+    ask my-in-informal-hookons [ die ] 
+    ask my-informal-sds [ die ]
+    ; set installments-remaining 24 ; ebw - allow the house to get credit for previous installations of the connection fee?
+    set times-installment-not-paid 0
+    set switchcount switchcount + 1
+    set switched-this-tick true
+    set debt 0
+    set connection-status "f"
+  ]
+end
+
+; `````````````````````````````` REPORTERS ````````````````````````````````````
+
+; Reporter for wealthy potential connections in top nth percentile, for setup
+to-report wealthy-potential-connections
+  let income-values sort [ income ] of houses
+  let percentile item (floor ( (100 - initial-formal-pct) / 100 * length income-values)) income-values
+  let wealthy-houses houses with [ income &gt;= percentile ]
+  report wealthy-houses with [ distance myself &lt;= formal-connection-limit and connection-status = "n" ]
+end
+
+; Reports the amount in KSh the HH has spent on formally accessed electricity that month, excluding connection fees
+to-report per-timestep-electricity-bill
+  report demand * tariff / 4
+end
+
+; Reports the formal connection fee (spread out over 24 months) if it is due this month, otherwise 0
+to-report this-month-connect-fee
+  ifelse installments-remaining &gt; 0
+    [ report formal-connect-fee ]
+  [ report 0 ]
+end 
+
+; Next month's cost
+to-report next-month-formal-cost
+  ifelse installments-remaining = 0 [
+    report per-timestep-electricity-bill * 4
+  ] [
+    report per-timestep-electricity-bill * 4 + formal-connect-fee
+  ]
+end
+
+to-report next-month-informal-cost
+  report informal-flat-fee
+end 
+
+to-report informal-houses
+  report houses with [ connection-status = "i" ]
+end
+
+to-report non-overloaded-informal-houses
+  report houses with [ count my-informal-sds with [ overloaded = false ] != 0 or count my-in-informal-hookons with [ overloaded = false ] != 0 ]
+end
+
+
+; ```````````````````````` HELPER PROCEDURES `````````````````````````
+
+; Reset global variables to BAU settings; ebw needs to be updated
+to bau
+  set choice-cost-sensitivity 1
+  set choice-attitude-weight 1
+  set choice-switching-inertia 2.2
+  set n-households 2000
+  set n-poles 100
+  set initial-formal-pct 50
+  set min-income 500
+  set min-demand 2
+  set formal-connect-fee 625
+  set min-informal-fee 200
+  set max-informal-fee 500
+  set pole-max-capacity 180
+  set informal-connection-capacity 13
+  set enforcement-number 5
+  set enforcement-freq 48
+  set pole-connection-limit 5
+  set formal-connection-limit 5
+  set informal-sd-limit 4
+  set hookon-limit 3
+  set debt-threshold 10
+  set init-attitude-kplc 40
+  set init-attitude-ipd 60
+  
+end
+
+to experiment-done-sound
+  sound:play-note "TRUMPET" 60 80 0.1
+  sound:play-note-later 0.15 "TRUMPET" 60 80 0.12
+  sound:play-note-later 0.3 "TRUMPET" 64 80 0.15
+  sound:play-note-later 0.45 "TRUMPET" 67 80 0.2
+  sound:play-note-later 0.75 "TRUMPET" 64 80 0.15
+  sound:play-note-later 0.9 "TRUMPET" 67 80 0.3  
+end
+
+to comparison-write [filename row]
+  file-open filename
+  file-print csv:to-row row
+  file-close
+end
+
+to comparison-base-settings
+  set initial-formal-pct 50
+  set n-households 2000
+  set n-poles 100
+  set min-income 500
+  set min-demand 2
+  set min-informal-fee 200
+  set max-informal-fee 500
+  set formal-connect-fee 625
+  set pole-max-capacity 180
+  set informal-connection-capacity 13
+  set enforcement-number 5
+  set enforcement-freq 110
+  set pole-connection-limit 5
+  set formal-connection-limit 5
+  set informal-sd-limit 4
+  set hookon-limit 3
+  set init-attitude-ipd 60
+  set init-attitude-kplc 40
+  set debt-threshold 10
+  set a-switch-blackout 50
+  set a-switch-debt 50
+  set a-switch-safety 50
+  set a-switch-demand 50
+  set a-switch-enforcements 50
+  set a-switch-satisfaction 50
+  set blackouts-attitude "only-hurt-kplc"
+  set blackout-mitigation-pct 50
+  set incidents-multiplier 5
+  set incidents-radius 1
+  set a-switch-safety-other 50
+  set r1 2
+  set r2 2
+  set choice-cost-sensitivity 1
+  set choice-attitude-weight 1
+  set choice-switching-inertia 2.2
+end
+
+to comparison-fixture [capacity formal-weekly direct-weekly hook-weekly]
+  clear-all
+  comparison-base-settings
+  reset-ticks
+  set informal-connection-capacity 13
+  set a-switch-blackout 0
+  set a-switch-demand 0
+  set a-switch-debt 0
+  set a-switch-safety 0
+  set a-switch-safety-other 0
+  set a-switch-satisfaction 0
+  set blackouts-attitude "only-hurt-kplc"
+  create-poles 1 [
+    setxy 0 0
+    set pole-capacity capacity
+    set pole-usage 0
+    set pole-overloaded false
+  ]
+  create-houses 3 [
+    setxy who 0
+    set income 100000
+    set HH-budget income
+    set desired-max-expense 100000
+    set expense 0
+    set demand 0
+    set tariff 23
+    set informal-flat-fee 200
+    set installments-remaining 0
+    set attitude-kplc true
+    set attitude-ipd true
+    set issues-this-tick false
+    set switched-this-tick false
+    set connection-status "i"
+  ]
+  ask houses [set nearby-houses other houses with [distance myself &lt;= 3]]
+  ask house 1 [set connection-status "f" set demand formal-weekly * 4]
+  ask house 2 [set demand hook-weekly * 4]
+  ask house 3 [set demand direct-weekly * 4]
+  ask pole 0 [
+    create-formal-connection-to house 1 [set overloaded false]
+    create-informal-sd-to house 3 [set overloaded false]
+  ]
+  ask house 1 [create-informal-hookon-to house 2 [set overloaded false]]
+end
+
+to comparison-energy-case [case-name capacity formal-weekly direct-weekly hook-weekly duration]
+  comparison-fixture capacity formal-weekly direct-weekly hook-weekly
+  let common-request formal-weekly + min (list direct-weekly 13) + min (list hook-weekly 13)
+  repeat duration [
+    ; Refresh cash to hold electricity demand constant, and skip switching,
+    ; enforcement, billing, negotiation and safety: only energy accounting runs.
+    ask houses [set HH-budget income set expense 0 set issues-this-tick false]
+    let usage-before [pole-usage] of pole 0
+    blackouts
+    let requested [pole-demand] of pole 0
+    let is-overloaded [pole-overloaded] of pole 0 = true
+    per-week
+    tick
+    comparison-write "energy.csv" (list "revised" case-name ticks capacity
+      formal-weekly direct-weekly hook-weekly common-request usage-before requested
+      [pole-usage] of pole 0 is-overloaded)
+  ]
+end
+
+to comparison-neighborhoods
+  comparison-base-settings
+  random-seed 42
+  setup
+  foreach [3 2] [radius -&gt;
+    let missing-houses count houses with [
+      count (nearby-houses with [distance myself &lt;= radius])
+      &lt; count (other houses with [distance myself &lt;= radius])
+    ]
+    let cached-count mean [count nearby-houses with [distance myself &lt;= radius]] of houses
+    let actual-count mean [count other houses with [distance myself &lt;= radius]] of houses
+    comparison-write "neighborhoods.csv" (list "revised" radius count houses
+      missing-houses cached-count actual-count
+      count houses with [connection-status = "f"]
+      mean [income] of houses mean [demand] of houses)
+  ]
+end
+
+to comparison-probes
+  comparison-write "energy.csv" (list "model" "case" "step" "capacity_kwh_week"
+    "formal_request_kwh_week" "direct_request_kwh_week" "hook_request_kwh_week"
+    "common_capped_request_kwh_week" "usage_before_check" "fresh_requested_load"
+    "usage_after_consumption" "overloaded")
+  comparison-write "neighborhoods.csv" (list "model" "radius" "households"
+    "households_missing_neighbors" "mean_valid_cached_neighbors" "mean_actual_neighbors"
+    "initial_formal_households" "mean_income" "mean_demand")
+  comparison-energy-case "below_capacity" 20 10 0 0 12
+  comparison-energy-case "above_capacity" 20 30 0 0 12
+  comparison-energy-case "direct_cap" 100 0 20 0 1
+  comparison-energy-case "hook_cap" 100 0 0 20 1
+  comparison-neighborhoods
+end
+</code>
+  <widgets>
+    <view x="500" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-32" height="739" showTickCounter="true" patchSize="11.31" fontSize="10" wrappingAllowedY="false" width="739" tickCounterLabel="ticks" maxPycor="32" updateMode="1" maxPxcor="32" minPxcor="-32" />
+    <slider x="9" step="1" y="66" max="100" width="150" display="initial-formal-pct" height="50" min="1" direction="Horizontal" default="50.0" variable="initial-formal-pct" />
+    <slider x="6" step="100" y="10" max="2500" width="150" display="n-households" height="50" min="1500" direction="Horizontal" default="2000.0" variable="n-households" />
+    <slider x="162" step="1" y="9" max="200" width="150" display="n-poles" height="50" min="20" direction="Horizontal" default="100.0" variable="n-poles" />
+    <slider x="173" step="100" y="66" max="1000" width="150" display="min-income" height="50" min="300" direction="Horizontal" default="500.0" variable="min-income" />
+    <slider x="331" step="1" y="6" max="10" width="150" display="min-demand" height="50" min="0" direction="Horizontal" default="2.0" variable="min-demand" />
+    <slider x="8" step="25" y="121" max="500" width="150" display="min-informal-fee" height="50" min="50" direction="Horizontal" default="200.0" variable="min-informal-fee" />
+    <slider x="170" step="25" y="124" max="1000" width="156" display="max-informal-fee" height="50" min="500" direction="Horizontal" default="500.0" variable="max-informal-fee" />
+    <slider x="331" step="25" y="124" max="3000" width="159" display="formal-connect-fee" height="50" min="25" direction="Horizontal" default="625.0" variable="formal-connect-fee" />
+    <slider x="9" step="1" y="179" max="500" width="154" display="pole-max-capacity" height="50" min="100" direction="Horizontal" default="180.0" variable="pole-max-capacity" />
+    <slider x="175" step="1" y="182" max="50" width="267" display="informal-connection-capacity" height="50" min="0" direction="Horizontal" default="13.0" variable="informal-connection-capacity" units="kWh/week" />
+    <slider x="10" step="1" y="239" max="20" width="166" display="enforcement-number" height="50" min="1" direction="Horizontal" default="5.0" variable="enforcement-number" />
+    <slider x="186" step="2" y="238" max="800" width="207" display="enforcement-freq" height="50" min="10" direction="Horizontal" default="110.0" variable="enforcement-freq" units="timesteps" />
+    <slider x="10" step="1" y="299" max="10" width="171" display="pole-connection-limit" height="50" min="1" direction="Horizontal" default="5.0" variable="pole-connection-limit" />
+    <slider x="188" step="1" y="297" max="10" width="150" display="formal-connection-limit" height="50" min="1" direction="Horizontal" default="5.0" variable="formal-connection-limit" />
+    <slider x="343" step="1" y="296" max="10" width="150" display="informal-sd-limit" height="50" min="0" direction="Horizontal" default="4.0" variable="informal-sd-limit" />
+    <slider x="8" step="1" y="361" max="10" width="150" display="hookon-limit" height="50" min="0" direction="Horizontal" default="3.0" variable="hookon-limit" />
+    <slider x="343" step="1" y="362" max="100" width="150" display="init-attitude-ipd" height="50" min="0" direction="Horizontal" default="60.0" variable="init-attitude-ipd" />
+    <slider x="187" step="1" y="361" max="100" width="150" display="init-attitude-kplc" height="50" min="0" direction="Horizontal" default="40.0" variable="init-attitude-kplc" />
+    <slider x="333" step="0.1" y="62" max="20" width="150" display="debt-threshold" height="50" min="0" direction="Horizontal" default="10.0" variable="debt-threshold" />
+    <slider x="15" step="1" y="544" max="100" width="150" display="a-switch-blackout" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-blackout" />
+    <slider x="176" step="1" y="541" max="100" width="150" display="a-switch-debt" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-debt" />
+    <slider x="336" step="1" y="543" max="100" width="150" display="a-switch-safety" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-safety" />
+    <slider x="16" step="1" y="604" max="100" width="150" display="a-switch-demand" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-demand" />
+    <slider x="176" step="1" y="603" max="100" width="150" display="a-switch-enforcements" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-enforcements" />
+    <slider x="18" step="1" y="660" max="100" width="161" display="a-switch-satisfaction" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-satisfaction" />
+    <chooser x="10" y="716" height="60" variable="blackouts-attitude" current="0" width="250" display="blackouts-attitude">
+      <choice type="string" value="only-hurt-kplc" />
+      <choice type="string" value="hurt-both-providers" />
+      <choice type="string" value="ipd-partial-mitigation" />
+      <choice type="string" value="ipd-full-mitigation" />
+    </chooser>
+    <slider x="266" step="1" y="729" max="100" width="188" display="blackout-mitigation-pct" height="50" min="0" direction="Horizontal" default="50.0" variable="blackout-mitigation-pct" />
+    <slider x="13" step="1" y="783" max="100" width="176" display="incidents-multiplier" height="50" min="0" direction="Horizontal" default="5.0" variable="incidents-multiplier" />
+    <slider x="198" step="0.1" y="783" max="10" width="250" display="incidents-radius" height="50" min="0" direction="Horizontal" default="1.0" variable="incidents-radius" />
+    <slider x="185" step="1" y="659" max="100" width="167" display="a-switch-safety-other" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-safety-other" />
+    <slider x="478" step="0.1" y="757" max="10" width="150" display="r1" height="50" min="0" direction="Horizontal" default="2.0" variable="r1" />
+    <slider x="636" step="0.1" y="757" max="10" width="150" display="r2" height="50" min="0" direction="Horizontal" default="2.0" variable="r2" />
+    <slider x="9" step="0.1" y="426" max="10" width="230" display="choice-cost-sensitivity" height="50" min="0" direction="Horizontal" default="1.0" variable="choice-cost-sensitivity" />
+    <slider x="250" step="0.1" y="426" max="10" width="230" display="choice-attitude-weight" height="50" min="0" direction="Horizontal" default="1.0" variable="choice-attitude-weight" />
+    <slider x="9" step="0.1" y="482" max="10" width="230" display="choice-switching-inertia" height="50" min="0" direction="Horizontal" default="2.2" variable="choice-switching-inertia" />
+  </widgets>
+  <info>## WHAT IS IT?
+
+A spatial agent-based model of formal and informal electricity access. This working revision corrects provider switching, neighborhood caches and weekly load accounting, and adds opt-in decision logging. The original model and its results are retained under results/base/.
+
+## HOW IT WORKS
+
+Households have fixed income/demand, a monthly spending reference, and Boolean attitudes to KPLC and informal suppliers. Issue-triggered switching uses a logistic probability combining relative monthly cost savings, the alternative-minus-current attitude difference, and switching inertia. The three choice weights are uncalibrated starting assumptions.
+
+Each week pole-demand records cash- and connection-constrained requested energy before outages. pole-usage records delivered energy. Both are recomputed each week; overload is determined from current requested load. Direct informal drops and hook-ons share the same weekly cap. Cached neighbors are initialized after all households are positioned.
+
+## HOW TO USE IT
+
+Run setup and go. The default profile is experiments/base.json. To record decisions after setup, run decision-log-start "decisions.csv"; call decision-log-stop when finished. Existing log files are protected from overwrite. scripts/run_model_diagnostics.py supplies headless weekly results and complete logs.
+
+## INTERPRETATION
+
+Attitudes remain Boolean and follow the original learning rules. The income/budget formulation and informal-only unconnected entry rule are retained. Logged co-occurring issue labels are not causal effect estimates. See docs/model-revision.md for the formula, changes, tests and original-model compatibility.
+</info>
+  <turtleShapes>
+    <shape name="default" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="5" />
+        <point x="40" y="250" />
+        <point x="150" y="205" />
+        <point x="260" y="250" />
+      </polygon>
+    </shape>
+    <shape name="airplane" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0" />
+        <point x="135" y="15" />
+        <point x="120" y="60" />
+        <point x="120" y="105" />
+        <point x="15" y="165" />
+        <point x="15" y="195" />
+        <point x="120" y="180" />
+        <point x="135" y="240" />
+        <point x="105" y="270" />
+        <point x="120" y="285" />
+        <point x="150" y="270" />
+        <point x="180" y="285" />
+        <point x="210" y="270" />
+        <point x="165" y="240" />
+        <point x="180" y="180" />
+        <point x="285" y="195" />
+        <point x="285" y="165" />
+        <point x="180" y="105" />
+        <point x="180" y="60" />
+        <point x="165" y="15" />
+      </polygon>
+    </shape>
+    <shape name="arrow" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0" />
+        <point x="0" y="150" />
+        <point x="105" y="150" />
+        <point x="105" y="293" />
+        <point x="195" y="293" />
+        <point x="195" y="150" />
+        <point x="300" y="150" />
+      </polygon>
+    </shape>
+    <shape name="box" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="285" />
+        <point x="285" y="225" />
+        <point x="285" y="75" />
+        <point x="150" y="135" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="135" />
+        <point x="15" y="75" />
+        <point x="150" y="15" />
+        <point x="285" y="75" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="75" />
+        <point x="15" y="225" />
+        <point x="150" y="285" />
+        <point x="150" y="135" />
+      </polygon>
+      <line endX="150" startY="285" marked="false" color="255" endY="135" startX="150" />
+      <line endX="15" startY="135" marked="false" color="255" endY="75" startX="150" />
+      <line endX="285" startY="135" marked="false" color="255" endY="75" startX="150" />
+    </shape>
+    <shape name="bug" rotatable="true" editableColorIndex="0">
+      <circle x="96" y="182" marked="true" color="-1920102913" diameter="108" filled="true" />
+      <circle x="110" y="127" marked="true" color="-1920102913" diameter="80" filled="true" />
+      <circle x="110" y="75" marked="true" color="-1920102913" diameter="80" filled="true" />
+      <line endX="80" startY="100" marked="true" color="-1920102913" endY="30" startX="150" />
+      <line endX="220" startY="100" marked="true" color="-1920102913" endY="30" startX="150" />
+    </shape>
+    <shape name="butterfly" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165" />
+        <point x="209" y="199" />
+        <point x="225" y="225" />
+        <point x="225" y="255" />
+        <point x="195" y="270" />
+        <point x="165" y="255" />
+        <point x="150" y="240" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165" />
+        <point x="89" y="198" />
+        <point x="75" y="225" />
+        <point x="75" y="255" />
+        <point x="105" y="270" />
+        <point x="135" y="255" />
+        <point x="150" y="240" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="139" y="148" />
+        <point x="100" y="105" />
+        <point x="55" y="90" />
+        <point x="25" y="90" />
+        <point x="10" y="105" />
+        <point x="10" y="135" />
+        <point x="25" y="180" />
+        <point x="40" y="195" />
+        <point x="85" y="194" />
+        <point x="139" y="163" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="162" y="150" />
+        <point x="200" y="105" />
+        <point x="245" y="90" />
+        <point x="275" y="90" />
+        <point x="290" y="105" />
+        <point x="290" y="135" />
+        <point x="275" y="180" />
+        <point x="260" y="195" />
+        <point x="215" y="195" />
+        <point x="162" y="165" />
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255" />
+        <point x="135" y="225" />
+        <point x="120" y="150" />
+        <point x="135" y="120" />
+        <point x="150" y="105" />
+        <point x="165" y="120" />
+        <point x="180" y="150" />
+        <point x="165" y="225" />
+      </polygon>
+      <circle x="135" y="90" marked="false" color="255" diameter="30" filled="true" />
+      <line endX="195" startY="105" marked="false" color="255" endY="60" startX="150" />
+      <line endX="105" startY="105" marked="false" color="255" endY="60" startX="150" />
+    </shape>
+    <shape name="car" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="300" y="180" />
+        <point x="279" y="164" />
+        <point x="261" y="144" />
+        <point x="240" y="135" />
+        <point x="226" y="132" />
+        <point x="213" y="106" />
+        <point x="203" y="84" />
+        <point x="185" y="63" />
+        <point x="159" y="50" />
+        <point x="135" y="50" />
+        <point x="75" y="60" />
+        <point x="0" y="150" />
+        <point x="0" y="165" />
+        <point x="0" y="225" />
+        <point x="300" y="225" />
+        <point x="300" y="180" />
+      </polygon>
+      <circle x="180" y="180" marked="false" color="255" diameter="90" filled="true" />
+      <circle x="30" y="180" marked="false" color="255" diameter="90" filled="true" />
+      <polygon color="255" filled="true" marked="false">
+        <point x="162" y="80" />
+        <point x="132" y="78" />
+        <point x="134" y="135" />
+        <point x="209" y="135" />
+        <point x="194" y="105" />
+        <point x="189" y="96" />
+        <point x="180" y="89" />
+      </polygon>
+      <circle x="47" y="195" marked="true" color="-1920102913" diameter="58" filled="true" />
+      <circle x="195" y="195" marked="true" color="-1920102913" diameter="58" filled="true" />
+    </shape>
+    <shape name="circle" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true" />
+    </shape>
+    <shape name="circle 2" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true" />
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true" />
+    </shape>
+    <shape name="cow" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="200" y="193" />
+        <point x="197" y="249" />
+        <point x="179" y="249" />
+        <point x="177" y="196" />
+        <point x="166" y="187" />
+        <point x="140" y="189" />
+        <point x="93" y="191" />
+        <point x="78" y="179" />
+        <point x="72" y="211" />
+        <point x="49" y="209" />
+        <point x="48" y="181" />
+        <point x="37" y="149" />
+        <point x="25" y="120" />
+        <point x="25" y="89" />
+        <point x="45" y="72" />
+        <point x="103" y="84" />
+        <point x="179" y="75" />
+        <point x="198" y="76" />
+        <point x="252" y="64" />
+        <point x="272" y="81" />
+        <point x="293" y="103" />
+        <point x="285" y="121" />
+        <point x="255" y="121" />
+        <point x="242" y="118" />
+        <point x="224" y="167" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="73" y="210" />
+        <point x="86" y="251" />
+        <point x="62" y="249" />
+        <point x="48" y="208" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="25" y="114" />
+        <point x="16" y="195" />
+        <point x="9" y="204" />
+        <point x="23" y="213" />
+        <point x="25" y="200" />
+        <point x="39" y="123" />
+      </polygon>
+    </shape>
+    <shape name="cylinder" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true" />
+    </shape>
+    <shape name="dot" rotatable="false" editableColorIndex="0">
+      <circle x="90" y="90" marked="true" color="-1920102913" diameter="120" filled="true" />
+    </shape>
+    <shape name="face happy" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true" />
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true" />
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true" />
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255" />
+        <point x="90" y="239" />
+        <point x="62" y="213" />
+        <point x="47" y="191" />
+        <point x="67" y="179" />
+        <point x="90" y="203" />
+        <point x="109" y="218" />
+        <point x="150" y="225" />
+        <point x="192" y="218" />
+        <point x="210" y="203" />
+        <point x="227" y="181" />
+        <point x="251" y="194" />
+        <point x="236" y="217" />
+        <point x="212" y="240" />
+      </polygon>
+    </shape>
+    <shape name="face neutral" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="7" marked="true" color="-1920102913" diameter="285" filled="true" />
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true" />
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true" />
+      <rectangle endX="240" startY="195" marked="false" color="255" endY="225" startX="60" filled="true" />
+    </shape>
+    <shape name="face sad" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true" />
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true" />
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true" />
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="168" />
+        <point x="90" y="184" />
+        <point x="62" y="210" />
+        <point x="47" y="232" />
+        <point x="67" y="244" />
+        <point x="90" y="220" />
+        <point x="109" y="205" />
+        <point x="150" y="198" />
+        <point x="192" y="205" />
+        <point x="210" y="220" />
+        <point x="227" y="242" />
+        <point x="251" y="229" />
+        <point x="236" y="206" />
+        <point x="212" y="183" />
+      </polygon>
+    </shape>
+    <shape name="fish" rotatable="false" editableColorIndex="0">
+      <polygon color="-1" filled="true" marked="false">
+        <point x="44" y="131" />
+        <point x="21" y="87" />
+        <point x="15" y="86" />
+        <point x="0" y="120" />
+        <point x="15" y="150" />
+        <point x="0" y="180" />
+        <point x="13" y="214" />
+        <point x="20" y="212" />
+        <point x="45" y="166" />
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="135" y="195" />
+        <point x="119" y="235" />
+        <point x="95" y="218" />
+        <point x="76" y="210" />
+        <point x="46" y="204" />
+        <point x="60" y="165" />
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="75" y="45" />
+        <point x="83" y="77" />
+        <point x="71" y="103" />
+        <point x="86" y="114" />
+        <point x="166" y="78" />
+        <point x="135" y="60" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="136" />
+        <point x="151" y="77" />
+        <point x="226" y="81" />
+        <point x="280" y="119" />
+        <point x="292" y="146" />
+        <point x="292" y="160" />
+        <point x="287" y="170" />
+        <point x="270" y="195" />
+        <point x="195" y="210" />
+        <point x="151" y="212" />
+        <point x="30" y="166" />
+      </polygon>
+      <circle x="215" y="106" marked="false" color="255" diameter="30" filled="true" />
+    </shape>
+    <shape name="flag" rotatable="false" editableColorIndex="0">
+      <rectangle endX="75" startY="15" marked="true" color="-1920102913" endY="300" startX="60" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="90" y="150" />
+        <point x="270" y="90" />
+        <point x="90" y="30" />
+      </polygon>
+      <line endX="90" startY="135" marked="true" color="-1920102913" endY="135" startX="75" />
+      <line endX="90" startY="45" marked="true" color="-1920102913" endY="45" startX="75" />
+    </shape>
+    <shape name="flower" rotatable="false" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="135" y="120" />
+        <point x="165" y="165" />
+        <point x="180" y="210" />
+        <point x="180" y="240" />
+        <point x="150" y="300" />
+        <point x="165" y="300" />
+        <point x="195" y="240" />
+        <point x="195" y="195" />
+        <point x="165" y="135" />
+      </polygon>
+      <circle x="85" y="132" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="130" y="147" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="192" y="85" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="85" y="40" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="177" y="40" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="177" y="132" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="70" y="85" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="130" y="25" marked="true" color="-1920102913" diameter="38" filled="true" />
+      <circle x="96" y="51" marked="true" color="-1920102913" diameter="108" filled="true" />
+      <circle x="113" y="68" marked="false" color="255" diameter="74" filled="true" />
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="189" y="233" />
+        <point x="219" y="188" />
+        <point x="249" y="173" />
+        <point x="279" y="188" />
+        <point x="234" y="218" />
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="180" y="255" />
+        <point x="150" y="210" />
+        <point x="105" y="210" />
+        <point x="75" y="240" />
+        <point x="135" y="240" />
+      </polygon>
+    </shape>
+    <shape name="house" rotatable="false" editableColorIndex="0">
+      <rectangle endX="255" startY="120" marked="true" color="-1920102913" endY="285" startX="45" filled="true" />
+      <rectangle endX="180" startY="210" marked="false" color="255" endY="285" startX="120" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="120" />
+        <point x="150" y="15" />
+        <point x="285" y="120" />
+      </polygon>
+      <line endX="270" startY="120" marked="false" color="255" endY="120" startX="30" />
+    </shape>
+    <shape name="leaf" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="210" />
+        <point x="135" y="195" />
+        <point x="120" y="210" />
+        <point x="60" y="210" />
+        <point x="30" y="195" />
+        <point x="60" y="180" />
+        <point x="60" y="165" />
+        <point x="15" y="135" />
+        <point x="30" y="120" />
+        <point x="15" y="105" />
+        <point x="40" y="104" />
+        <point x="45" y="90" />
+        <point x="60" y="90" />
+        <point x="90" y="105" />
+        <point x="105" y="120" />
+        <point x="120" y="120" />
+        <point x="105" y="60" />
+        <point x="120" y="60" />
+        <point x="135" y="30" />
+        <point x="150" y="15" />
+        <point x="165" y="30" />
+        <point x="180" y="60" />
+        <point x="195" y="60" />
+        <point x="180" y="120" />
+        <point x="195" y="120" />
+        <point x="210" y="105" />
+        <point x="240" y="90" />
+        <point x="255" y="90" />
+        <point x="263" y="104" />
+        <point x="285" y="105" />
+        <point x="270" y="120" />
+        <point x="285" y="135" />
+        <point x="240" y="165" />
+        <point x="240" y="180" />
+        <point x="270" y="195" />
+        <point x="240" y="210" />
+        <point x="180" y="210" />
+        <point x="165" y="195" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="195" />
+        <point x="135" y="240" />
+        <point x="120" y="255" />
+        <point x="105" y="255" />
+        <point x="105" y="285" />
+        <point x="135" y="285" />
+        <point x="165" y="240" />
+        <point x="165" y="195" />
+      </polygon>
+    </shape>
+    <shape name="line" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="300" startX="150" />
+    </shape>
+    <shape name="line half" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="150" startX="150" />
+    </shape>
+    <shape name="pentagon" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="15" />
+        <point x="15" y="120" />
+        <point x="60" y="285" />
+        <point x="240" y="285" />
+        <point x="285" y="120" />
+      </polygon>
+    </shape>
+    <shape name="person" rotatable="false" editableColorIndex="0">
+      <circle x="110" y="5" marked="true" color="-1920102913" diameter="80" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90" />
+        <point x="120" y="195" />
+        <point x="90" y="285" />
+        <point x="105" y="300" />
+        <point x="135" y="300" />
+        <point x="150" y="225" />
+        <point x="165" y="300" />
+        <point x="195" y="300" />
+        <point x="210" y="285" />
+        <point x="180" y="195" />
+        <point x="195" y="90" />
+      </polygon>
+      <rectangle endX="172" startY="79" marked="true" color="-1920102913" endY="94" startX="127" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="195" y="90" />
+        <point x="240" y="150" />
+        <point x="225" y="180" />
+        <point x="165" y="105" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90" />
+        <point x="60" y="150" />
+        <point x="75" y="180" />
+        <point x="135" y="105" />
+      </polygon>
+    </shape>
+    <shape name="plant" rotatable="false" editableColorIndex="0">
+      <rectangle endX="165" startY="90" marked="true" color="-1920102913" endY="300" startX="135" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="255" />
+        <point x="90" y="210" />
+        <point x="45" y="195" />
+        <point x="75" y="255" />
+        <point x="135" y="285" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="255" />
+        <point x="210" y="210" />
+        <point x="255" y="195" />
+        <point x="225" y="255" />
+        <point x="165" y="285" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="180" />
+        <point x="90" y="135" />
+        <point x="45" y="120" />
+        <point x="75" y="180" />
+        <point x="135" y="210" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="180" />
+        <point x="165" y="210" />
+        <point x="225" y="180" />
+        <point x="255" y="120" />
+        <point x="210" y="135" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="105" />
+        <point x="90" y="60" />
+        <point x="45" y="45" />
+        <point x="75" y="105" />
+        <point x="135" y="135" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="105" />
+        <point x="165" y="135" />
+        <point x="225" y="105" />
+        <point x="255" y="45" />
+        <point x="210" y="60" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="90" />
+        <point x="120" y="45" />
+        <point x="150" y="15" />
+        <point x="180" y="45" />
+        <point x="165" y="90" />
+      </polygon>
+    </shape>
+    <shape name="sheep" rotatable="false" editableColorIndex="15">
+      <circle x="203" y="65" marked="true" color="-1" diameter="88" filled="true" />
+      <circle x="70" y="65" marked="true" color="-1" diameter="162" filled="true" />
+      <circle x="150" y="105" marked="true" color="-1" diameter="120" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="218" y="120" />
+        <point x="240" y="165" />
+        <point x="255" y="165" />
+        <point x="278" y="120" />
+      </polygon>
+      <circle x="214" y="72" marked="false" color="-1920102913" diameter="67" filled="true" />
+      <rectangle endX="179" startY="223" marked="true" color="-1" endY="298" startX="164" filled="true" />
+      <polygon color="-1" filled="true" marked="true">
+        <point x="45" y="285" />
+        <point x="30" y="285" />
+        <point x="30" y="240" />
+        <point x="15" y="195" />
+        <point x="45" y="210" />
+      </polygon>
+      <circle x="3" y="83" marked="true" color="-1" diameter="150" filled="true" />
+      <rectangle endX="80" startY="221" marked="true" color="-1" endY="296" startX="65" filled="true" />
+      <polygon color="-1" filled="true" marked="true">
+        <point x="195" y="285" />
+        <point x="210" y="285" />
+        <point x="210" y="240" />
+        <point x="240" y="210" />
+        <point x="195" y="210" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="276" y="85" />
+        <point x="285" y="105" />
+        <point x="302" y="99" />
+        <point x="294" y="83" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="219" y="85" />
+        <point x="210" y="105" />
+        <point x="193" y="99" />
+        <point x="201" y="83" />
+      </polygon>
+    </shape>
+    <shape name="square" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true" />
+    </shape>
+    <shape name="square 2" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true" />
+      <rectangle endX="240" startY="60" marked="false" color="255" endY="240" startX="60" filled="true" />
+    </shape>
+    <shape name="star" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="151" y="1" />
+        <point x="185" y="108" />
+        <point x="298" y="108" />
+        <point x="207" y="175" />
+        <point x="242" y="282" />
+        <point x="151" y="216" />
+        <point x="59" y="282" />
+        <point x="94" y="175" />
+        <point x="3" y="108" />
+        <point x="116" y="108" />
+      </polygon>
+    </shape>
+    <shape name="target" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true" />
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true" />
+      <circle x="60" y="60" marked="true" color="-1920102913" diameter="180" filled="true" />
+      <circle x="90" y="90" marked="false" color="255" diameter="120" filled="true" />
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true" />
+    </shape>
+    <shape name="tree" rotatable="false" editableColorIndex="0">
+      <circle x="118" y="3" marked="true" color="-1920102913" diameter="94" filled="true" />
+      <rectangle endX="180" startY="195" marked="false" color="-1653716737" endY="300" startX="120" filled="true" />
+      <circle x="65" y="21" marked="true" color="-1920102913" diameter="108" filled="true" />
+      <circle x="116" y="41" marked="true" color="-1920102913" diameter="127" filled="true" />
+      <circle x="45" y="90" marked="true" color="-1920102913" diameter="120" filled="true" />
+      <circle x="104" y="74" marked="true" color="-1920102913" diameter="152" filled="true" />
+    </shape>
+    <shape name="triangle" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30" />
+        <point x="15" y="255" />
+        <point x="285" y="255" />
+      </polygon>
+    </shape>
+    <shape name="triangle 2" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30" />
+        <point x="15" y="255" />
+        <point x="285" y="255" />
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="151" y="99" />
+        <point x="225" y="223" />
+        <point x="75" y="224" />
+      </polygon>
+    </shape>
+    <shape name="truck" rotatable="false" editableColorIndex="0">
+      <rectangle endX="195" startY="45" marked="true" color="-1920102913" endY="187" startX="4" filled="true" />
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="296" y="193" />
+        <point x="296" y="150" />
+        <point x="259" y="134" />
+        <point x="244" y="104" />
+        <point x="208" y="104" />
+        <point x="207" y="194" />
+      </polygon>
+      <rectangle endX="195" startY="60" marked="false" color="-1" endY="105" startX="195" filled="true" />
+      <polygon color="255" filled="true" marked="false">
+        <point x="238" y="112" />
+        <point x="252" y="141" />
+        <point x="219" y="141" />
+        <point x="218" y="112" />
+      </polygon>
+      <circle x="234" y="174" marked="false" color="255" diameter="42" filled="true" />
+      <rectangle endX="214" startY="185" marked="true" color="-1920102913" endY="194" startX="181" filled="true" />
+      <circle x="144" y="174" marked="false" color="255" diameter="42" filled="true" />
+      <circle x="24" y="174" marked="false" color="255" diameter="42" filled="true" />
+      <circle x="24" y="174" marked="true" color="-1920102913" diameter="42" filled="false" />
+      <circle x="144" y="174" marked="true" color="-1920102913" diameter="42" filled="false" />
+      <circle x="234" y="174" marked="true" color="-1920102913" diameter="42" filled="false" />
+    </shape>
+    <shape name="turtle" rotatable="true" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="215" y="204" />
+        <point x="240" y="233" />
+        <point x="246" y="254" />
+        <point x="228" y="266" />
+        <point x="215" y="252" />
+        <point x="193" y="210" />
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="195" y="90" />
+        <point x="225" y="75" />
+        <point x="245" y="75" />
+        <point x="260" y="89" />
+        <point x="269" y="108" />
+        <point x="261" y="124" />
+        <point x="240" y="105" />
+        <point x="225" y="105" />
+        <point x="210" y="105" />
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="105" y="90" />
+        <point x="75" y="75" />
+        <point x="55" y="75" />
+        <point x="40" y="89" />
+        <point x="31" y="108" />
+        <point x="39" y="124" />
+        <point x="60" y="105" />
+        <point x="75" y="105" />
+        <point x="90" y="105" />
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="132" y="85" />
+        <point x="134" y="64" />
+        <point x="107" y="51" />
+        <point x="108" y="17" />
+        <point x="150" y="2" />
+        <point x="192" y="18" />
+        <point x="192" y="52" />
+        <point x="169" y="65" />
+        <point x="172" y="87" />
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="85" y="204" />
+        <point x="60" y="233" />
+        <point x="54" y="254" />
+        <point x="72" y="266" />
+        <point x="85" y="252" />
+        <point x="107" y="210" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="119" y="75" />
+        <point x="179" y="75" />
+        <point x="209" y="101" />
+        <point x="224" y="135" />
+        <point x="220" y="225" />
+        <point x="175" y="261" />
+        <point x="128" y="261" />
+        <point x="81" y="224" />
+        <point x="74" y="135" />
+        <point x="88" y="99" />
+      </polygon>
+    </shape>
+    <shape name="wheel" rotatable="false" editableColorIndex="0">
+      <circle x="3" y="3" marked="true" color="-1920102913" diameter="294" filled="true" />
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true" />
+      <line endX="150" startY="285" marked="true" color="-1920102913" endY="15" startX="150" />
+      <line endX="285" startY="150" marked="true" color="-1920102913" endY="150" startX="15" />
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true" />
+      <line endX="79" startY="40" marked="true" color="-1920102913" endY="269" startX="216" />
+      <line endX="269" startY="84" marked="true" color="-1920102913" endY="221" startX="40" />
+      <line endX="269" startY="216" marked="true" color="-1920102913" endY="79" startX="40" />
+      <line endX="221" startY="40" marked="true" color="-1920102913" endY="269" startX="84" />
+    </shape>
+    <shape name="wolf" rotatable="false" editableColorIndex="0">
+      <polygon color="255" filled="true" marked="false">
+        <point x="253" y="133" />
+        <point x="245" y="131" />
+        <point x="245" y="133" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="2" y="194" />
+        <point x="13" y="197" />
+        <point x="30" y="191" />
+        <point x="38" y="193" />
+        <point x="38" y="205" />
+        <point x="20" y="226" />
+        <point x="20" y="257" />
+        <point x="27" y="265" />
+        <point x="38" y="266" />
+        <point x="40" y="260" />
+        <point x="31" y="253" />
+        <point x="31" y="230" />
+        <point x="60" y="206" />
+        <point x="68" y="198" />
+        <point x="75" y="209" />
+        <point x="66" y="228" />
+        <point x="65" y="243" />
+        <point x="82" y="261" />
+        <point x="84" y="268" />
+        <point x="100" y="267" />
+        <point x="103" y="261" />
+        <point x="77" y="239" />
+        <point x="79" y="231" />
+        <point x="100" y="207" />
+        <point x="98" y="196" />
+        <point x="119" y="201" />
+        <point x="143" y="202" />
+        <point x="160" y="195" />
+        <point x="166" y="210" />
+        <point x="172" y="213" />
+        <point x="173" y="238" />
+        <point x="167" y="251" />
+        <point x="160" y="248" />
+        <point x="154" y="265" />
+        <point x="169" y="264" />
+        <point x="178" y="247" />
+        <point x="186" y="240" />
+        <point x="198" y="260" />
+        <point x="200" y="271" />
+        <point x="217" y="271" />
+        <point x="219" y="262" />
+        <point x="207" y="258" />
+        <point x="195" y="230" />
+        <point x="192" y="198" />
+        <point x="210" y="184" />
+        <point x="227" y="164" />
+        <point x="242" y="144" />
+        <point x="259" y="145" />
+        <point x="284" y="151" />
+        <point x="277" y="141" />
+        <point x="293" y="140" />
+        <point x="299" y="134" />
+        <point x="297" y="127" />
+        <point x="273" y="119" />
+        <point x="270" y="105" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="-1" y="195" />
+        <point x="14" y="180" />
+        <point x="36" y="166" />
+        <point x="40" y="153" />
+        <point x="53" y="140" />
+        <point x="82" y="131" />
+        <point x="134" y="133" />
+        <point x="159" y="126" />
+        <point x="188" y="115" />
+        <point x="227" y="108" />
+        <point x="236" y="102" />
+        <point x="238" y="98" />
+        <point x="268" y="86" />
+        <point x="269" y="92" />
+        <point x="281" y="87" />
+        <point x="269" y="103" />
+        <point x="269" y="113" />
+      </polygon>
+    </shape>
+    <shape name="x" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="270" y="75" />
+        <point x="225" y="30" />
+        <point x="30" y="225" />
+        <point x="75" y="270" />
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="75" />
+        <point x="75" y="30" />
+        <point x="270" y="225" />
+        <point x="225" y="270" />
+      </polygon>
+    </shape>
+  </turtleShapes>
+  <linkShapes>
+    <shape name="default" curviness="0.0">
+      <lines>
+        <line x="-0.2" visible="false">
+          <dash value="0.0" />
+          <dash value="1.0" />
+        </line>
+        <line x="0.0" visible="true">
+          <dash value="1.0" />
+          <dash value="0.0" />
+        </line>
+        <line x="0.2" visible="false">
+          <dash value="0.0" />
+          <dash value="1.0" />
+        </line>
+      </lines>
+      <indicator>
+        <shape name="link direction" rotatable="true" editableColorIndex="0">
+          <line endX="90" startY="150" marked="true" color="-1920102913" endY="180" startX="150" />
+          <line endX="210" startY="150" marked="true" color="-1920102913" endY="180" startX="150" />
+        </shape>
+      </indicator>
+    </shape>
+  </linkShapes>
+  <previewCommands>setup repeat 75 [ go ]</previewCommands>
+  <experiments>
+    <experiment name="init-trust" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="init-trust-ipd" first="0" step="20" last="100" />
+        <steppedValueSet variable="init-trust-kplc" first="0" step="20" last="100" />
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="debt-threshold" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="0.1" />
+          <value value="0.5" />
+          <value value="1" />
+          <value value="2" />
+          <value value="5" />
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="elec-price" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="23" />
+          <value value="33" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="elec-price-lifeline" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="18" />
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="pole-max-capacity" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="150" />
+          <value value="160" />
+          <value value="170" />
+          <value value="190" />
+          <value value="200" />
+          <value value="210" />
+          <value value="220" />
+          <value value="230" />
+          <value value="240" />
+          <value value="250" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="enforcement-freq" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="24" />
+          <value value="72" />
+          <value value="96" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="enforcement-number" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="0" />
+          <value value="1" />
+          <value value="10" />
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="formal-connect-fee" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="50" />
+          <value value="625" />
+          <value value="1375" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="informal-connection-capacity" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="11" />
+          <value value="12" />
+          <value value="14" />
+          <value value="15" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="initial-formal-pct" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="1" />
+          <value value="20" />
+          <value value="40" />
+          <value value="60" />
+          <value value="80" />
+          <value value="99" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="likely-switch-chance" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="0" />
+          <value value="25" />
+          <value value="75" />
+          <value value="100" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="informal-fee" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="300" />
+          <value value="500" />
+          <value value="700" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="50" />
+          <value value="100" />
+          <value value="200" />
+          <value value="300" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="min-demand" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="1" />
+          <value value="3" />
+          <value value="5" />
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="min-income" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="100" />
+          <value value="300" />
+          <value value="700" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="n-households" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="1800" />
+          <value value="1900" />
+          <value value="2100" />
+          <value value="2200" />
+          <value value="2300" />
+          <value value="2400" />
+          <value value="2500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="trust-flip" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="0" />
+          <value value="1" />
+          <value value="10" />
+          <value value="25" />
+          <value value="50" />
+          <value value="75" />
+          <value value="100" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="cost-trust-based-switch-chance" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="0" />
+          <value value="1" />
+          <value value="10" />
+          <value value="25" />
+          <value value="50" />
+          <value value="75" />
+          <value value="100" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="52" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="0" />
+          <value value="1" />
+          <value value="10" />
+          <value value="25" />
+          <value value="50" />
+          <value value="75" />
+          <value value="100" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="scenario data collection" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 and trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-formal-connections = 1 and trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-formal-connections = 1 and trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-formal-connections = 1 and trust-kplc = false and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 and trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 and trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 and trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 and trust-kplc = false and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 and trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 and trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 and trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-in-informal-hookons = 1 and trust-kplc = false and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-links = 0 and trust-kplc = true and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-links = 0 and trust-kplc = true and trust-ipd = false ]</metric>
+        <metric>count houses with [ count my-links = 0 and trust-kplc = false and trust-ipd = true ]</metric>
+        <metric>count houses with [ count my-links = 0 and trust-kplc = false and trust-ipd = false ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="48" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-sd-limit">
+          <value value="4" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="hookon-limit">
+          <value value="3" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+    <experiment name="role of trust testing" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup</setup>
+      <go>go</go>
+      <postExperiment>experiment-done-sound</postExperiment>
+      <metrics>
+        <metric>count houses with [ count my-formal-connections = 1 ]</metric>
+        <metric>count houses with [ count my-informal-sds = 1 or count my-in-informal-hookons = 1 ]</metric>
+        <metric>count houses with [ count my-links = 0 ]</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="cost-based-switch-chance">
+          <value value="20" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="debt-threshold">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price">
+          <value value="28" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="elec-price-lifeline">
+          <value value="23" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-freq">
+          <value value="48" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="enforcement-number">
+          <value value="5" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-sd-limit">
+          <value value="4" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="hookon-limit">
+          <value value="3" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="formal-connect-fee">
+          <value value="625" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="informal-connection-capacity">
+          <value value="13" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-ipd">
+          <value value="60" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="init-trust-kplc">
+          <value value="40" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-formal-pct">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="likely-switch-chance">
+          <value value="50" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="max-informal-fee">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-demand">
+          <value value="2" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-income">
+          <value value="500" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="min-informal-fee">
+          <value value="200" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="n-households">
+          <value value="2000" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="pole-max-capacity">
+          <value value="180" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-based-switch-chance">
+          <value value="10" />
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="trust-flip">
+          <value value="5" />
+        </enumeratedValueSet>
+        <steppedValueSet variable="random-seed" first="0" step="1" last="49" />
+      </constants>
+    </experiment>
+  </experiments>
+</model>

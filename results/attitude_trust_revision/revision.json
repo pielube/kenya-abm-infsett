@@ -1,0 +1,26 @@
+{
+  "branch": "attitude-trust-review",
+  "implemented_priorities": [
+    1,
+    2,
+    8
+  ],
+  "source_model": "models/kenya_informal_settlements.nlogox",
+  "source_sha256": "90ba10b48cfd5927c6b11004aeb05fb48d66a70d499fe25c3f641e830292e28c",
+  "include_sha256": "58416e2c49e85256c03c924b2ff62bcbecd6cef7be9d7b785f40f1debea7b238",
+  "original_sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987",
+  "choice_defaults": {
+    "choice-cost-sensitivity": 1,
+    "choice-attitude-weight": 1,
+    "choice-switching-inertia": 2.2
+  },
+  "validation": {
+    "runner_tests": 20,
+    "sampling_tests": 9,
+    "real_engine_test_groups": 6,
+    "real_engine_contracts": 19,
+    "event_validation": "event_validation.json",
+    "standard_runner_check": "standard_runner_check.json"
+  },
+  "scope": "One seed, combined changes, uncalibrated choice weights; no empirical or causal-ablation claim."
+}

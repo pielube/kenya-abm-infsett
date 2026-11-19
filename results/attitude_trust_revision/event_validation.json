@@ -1,0 +1,36 @@
+{
+  "passed": true,
+  "events": 74893,
+  "by_kind": {
+    "access-attempt": 13997,
+    "voluntary-choice": 60208,
+    "forced-disconnection": 688
+  },
+  "attempted_by_kind": {
+    "access-attempt": 3491,
+    "voluntary-choice": 3878,
+    "forced-disconnection": 0
+  },
+  "successful_by_kind": {
+    "access-attempt": 1498,
+    "voluntary-choice": 2717,
+    "forced-disconnection": 688
+  },
+  "by_reason": {
+    "probability-not-selected": 66836,
+    "unconnected-access": 1498,
+    "no-feasible-source": 3154,
+    "voluntary-switch": 2717,
+    "host-loss-voluntary-switch": 623,
+    "enforcement": 65
+  },
+  "checks": [
+    "Consecutive event IDs",
+    "Pre-choice costs and attitudes reconstruct all voluntary probabilities",
+    "Random draws agree with attempted choices",
+    "Successful choices agree with destinations and links",
+    "Forced disconnections are separately classified",
+    "Logged52-week trajectory equals first52weeks of unlogged1480-week run"
+  ],
+  "scope": "One seed42 combined-change diagnostic; not a causal ablation or calibrated prediction."
+}

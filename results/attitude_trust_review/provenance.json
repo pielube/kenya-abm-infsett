@@ -1,0 +1,51 @@
+{
+  "analysis": "Existing-base descriptive attitude and income assessment",
+  "model_role": "original-archived-base",
+  "script": "scripts/assess_attitude_data.py",
+  "script_sha256": "4b97ca46657492202bfe99e850255e805d50e8e4a8156cba82ff36886712a858",
+  "inputs": [
+    {
+      "path": "results/base/data/households.csv",
+      "sha256": "e221ebca058bfb854004d404e285a346870c8309f3fe0b219a550c4e7aa3c083"
+    },
+    {
+      "path": "results/base/data/aggregate.csv",
+      "sha256": "8ab980a4c08772786a173f393f8835f1a01571564662c579bc6be3bbf2da81ee"
+    },
+    {
+      "path": "experiments/original-base.json",
+      "sha256": "f4284aa24fcb4e255f1cfe280fd3afb6d579e997175bb7b834239b2016ebd17d"
+    },
+    {
+      "path": "results/base/runs/52_ticks/model.nlogox",
+      "sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987"
+    },
+    {
+      "path": "results/base/runs/52_ticks/results.csv",
+      "sha256": "3139042d98b5ec2e687834290ea1dd184779c06fdf77c1ce62ee328193f8d562"
+    },
+    {
+      "path": "results/base/runs/1480_ticks/results.csv",
+      "sha256": "8c9df6707007573a48b964d8b77bd403c72e78ec5897f6327e747a62cb7f2d35"
+    }
+  ],
+  "seed": 42,
+  "model_sha256": "859d920dcb381ebdffc381525c24747d0dff3d7fbd315959f540cd9dd957c987",
+  "quintiles": "Five equal-size groups ordered by initial income, with household identifier as a deterministic tie-breaker.",
+  "cost_comparisons": "Strict numeric less-than comparisons; equal-cost observations counted separately.",
+  "limits": [
+    "One seed-42 realization; households interact and are not independent simulation replicates.",
+    "Attitudes are Boolean flags and observed after the model go procedure; they may already reflect current-provider experience in that week.",
+    "Income quintiles are fixed ranks of initial income; both income and demand remain fixed in this run.",
+    "Controlling for income groups does not control for service history, spatial reach, available alternatives, connection history or income-linked demand.",
+    "Within-income associations do not separate attitude-driven selection from experience-driven attitude changes.",
+    "Predicted costs assume the model's full-demand tariff rule and remaining installment state; a cheaper alternative need not be feasible or deliver equivalent service.",
+    "The informal cap comparison uses the nominal13kWh weekly cap times four; direct service drops and hook-ons do not apply this cap consistently in the model.",
+    "Existing household observations are11 selected snapshots, not complete decision-level histories; issue reasons and prospective choice sets are not recorded."
+  ],
+  "validation": {
+    "group_totals": "passed",
+    "fixed_income_and_demand": "passed",
+    "tick52_and1480_status_counts_match_canonical_runs": "passed"
+  }
+}

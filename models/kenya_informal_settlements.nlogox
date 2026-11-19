@@ -11,13 +11,15 @@
 
 ; Extensions
 extensions [ profiler sound csv ]
+__includes [ "decision_logging.nls" ]
 
 ; Two breeds, houses and poles
 breed [ houses house ]
 breed [ poles pole ]
 
 ; Helper global variables during calibration
-globals [ max-income count-disconnect-kplc count-disconnect-ipd count-negotiate ]
+globals [ max-income count-disconnect-kplc count-disconnect-ipd count-negotiate
+  decision-log-enabled? decision-log-path decision-log-event-id ]
 
 ; Household variables.
 ; Demand is monthly electricity demand in kWh. Demand-per-unit-income is used to set up and vary demand by income.
@@ -29,7 +31,7 @@ globals [ max-income count-disconnect-kplc count-disconnect-ipd count-negotiate 
 ; Tariff is the tariff level a household is charged, based on demand. installments-remaining tracks how many months left a household has on its loan to pay off the formal connection fee. 
 ; Informal-flat-fee is the monthly fee charged to informal service drop and informal hookon customers, which scales with income.
 houses-own [ demand demand-per-unit-income income HH-budget expense desired-expense-pct desired-max-expense spend-ratio debt nearby-houses connection-status
-  switchcount switched-this-tick issues-this-tick cant-afford
+  switchcount switched-this-tick issues-this-tick cant-afford decision-log-issues
   tariff installments-remaining informal-flat-fee
 ; These attitude variables track attitude towards KPLC and towards informal power distributors (IPDs).
 ; times-installment-not-paid tracks nonpayment of the one-time formal connection fee, spread over 24 months. Times-ipd-not-paid tracks nonpayment of the informal-flat-fee.
@@ -38,8 +40,10 @@ houses-own [ demand demand-per-unit-income income HH-budget expense desired-expe
 ; Number of informal connections at any given time, including hook-ons and SDs
 ; Number of formal connections at any given time
 ; pole-overloaded gives the overloaded status at any given point
-; pole-capacity is the maximum weekly kWh capacity of a pole, used to set up overloading/blackouts
-poles-own [ number-informal-connections number-formal-connections pole-overloaded pole-capacity pole-usage ]
+; pole-capacity is the maximum weekly kWh capacity of a pole.
+; pole-demand is this week's requested load after cash/connection limits, before outages.
+; pole-usage is electricity actually delivered this week; it is zero during an outage.
+poles-own [ number-informal-connections number-formal-connections pole-overloaded pole-capacity pole-demand pole-usage ]
 
 ; Breeds for connection types. 
 ; Formal-connections exist between poles and houses, informal service drops between poles and houses,
@@ -77,7 +81,11 @@ informal-hookons-own [ overloaded ]
 ; Sets the max capacity per month of the poles in kWh
 ; Resets ticks
 to setup
+  decision-log-stop
   clear-all
+  if (choice-cost-sensitivity < 0 or choice-attitude-weight < 0 or choice-switching-inertia < 0) [
+    error "Choice sensitivities and switching inertia must be nonnegative."
+  ]
 
   ; random-seed 0
   
@@ -95,13 +103,21 @@ to setup
     set informal-flat-fee min-informal-fee + random-float (max-informal-fee - min-informal-fee)
     set switchcount 0
     set times-ipd-not-paid 0
-    set issues-this-tick false  
+    set issues-this-tick false
+    decision-log-reset-issues
     set connection-status "n"
     set installments-remaining 24
     ifelse random-float 100 < init-attitude-kplc [ set attitude-kplc true ] [ set attitude-kplc false ]
     ifelse random-float 100 < init-attitude-ipd [ set attitude-ipd true ] [ set attitude-ipd false ]
-    set nearby-houses other houses with [ distance myself <= max-radius ]
     set cant-afford 0
+  ]
+
+  ; Cache only after every household has its final position. This read-only
+  ; initialization must not consume random numbers used to build the network.
+  with-local-randomness [
+    ask houses [
+      set nearby-houses other houses with [ distance myself <= max-radius ]
+    ]
   ]
   
   set max-income max [income] of houses
@@ -126,7 +142,7 @@ to setup
 end
 
 ; Go procedures
-; Stop conditions are if simulation reaches tick 480 (almost 11 years)
+; Stop at 1480 weekly ticks. The archived original used the same active limit.
 ; Reset tracking variables
 to go
   ;profiler:start                                 ;; start profiling
@@ -138,13 +154,14 @@ to go
   ]
   ask houses [
     set issues-this-tick false
+    decision-log-reset-issues
     set switched-this-tick false
     ]
   earn-income-budget ; monthly
   policy-intervention
-  blackouts
   negotiate ; monthly
   monthly-billing ; monthly
+  blackouts ; classify this week's load after fixed payments, before consumption
   per-week ; weekly
   safety-incidents
   service-satisfaction
@@ -195,6 +212,9 @@ to add-a-pole
     set size 2
     set shape "dot"
     set pole-capacity pole-max-capacity
+    set pole-demand 0
+    set pole-usage 0
+    set pole-overloaded false
     let nearest-network-point min-one-of other poles [ distance myself ]
     if nearest-network-point != nobody [
       create-pole-connection-to nearest-network-point [
@@ -274,12 +294,21 @@ to policy-intervention
 end
 
 
-; Blackouts occur if the pole-usage of a pole is greater than the max-capacity. All houses to that pole have their connections set to overloaded, as well as all houses illegally connected to them.
-; If the usage falls below max-capacity again, this is reversed.
+; Estimate current-week load without using last week's outage flags. Formal
+; demand is limited by cash remaining after fixed payments; both informal link
+; types obey the same per-household connection cap. An overloaded pole supplies
+; no electricity this week, but its requested load remains available separately.
 to blackouts
   
   ask poles [
-    ifelse pole-usage > pole-capacity [
+    with-local-randomness [
+      set pole-usage 0
+      let formal-load sum [ formal-weekly-load ] of out-formal-connection-neighbors
+      let direct-informal-load sum [ informal-weekly-load ] of out-informal-sd-neighbors
+      let hookon-load sum [ sum [ informal-weekly-load ] of out-informal-hookon-neighbors ] of out-formal-connection-neighbors
+      set pole-demand formal-load + direct-informal-load + hookon-load
+    ]
+    ifelse pole-demand > pole-capacity [
       set color magenta
       set pole-overloaded true
       ask my-formal-connections [ set overloaded true ]
@@ -298,6 +327,15 @@ to blackouts
     ]
   ]
   
+end
+
+; Requested weekly use before pole outages. These reporters are household-only.
+to-report formal-weekly-load
+  report min (list (max (list (demand / 4) 0)) ((max (list HH-budget 0)) / tariff))
+end
+
+to-report informal-weekly-load
+  report min (list (max (list (demand / 4) 0)) informal-connection-capacity)
 end
 
 
@@ -405,6 +443,7 @@ to per-week
         ask in-formal-connection-neighbors [ set pole-usage pole-usage + link-usage ] ; pole usage updated
         set HH-budget 0
         if random 100 < a-switch-demand [ set attitude-kplc false ] 
+        decision-log-add-issue "formal-demand-shortfall"
         set issues-this-tick true
         set cant-afford cant-afford + 1
       ] )
@@ -424,9 +463,10 @@ to per-week
       ; Households that can't use all the electricity they want
       ask in-informal-sd-neighbors [ set pole-usage pole-usage + informal-connection-capacity ]
       ask in-informal-hookon-neighbors [
-        ask in-formal-connection-neighbors [ set pole-usage pole-usage + link-usage ]
+        ask in-formal-connection-neighbors [ set pole-usage pole-usage + informal-connection-capacity ]
       ]
       if random 100 < a-switch-demand [ set attitude-ipd false ] 
+      decision-log-add-issue "informal-capacity-shortfall"
       set issues-this-tick true
     ]
   ]
@@ -436,18 +476,17 @@ to per-week
   
   ; HHs with formal connections that are overloaded, and their hook-ons, have no usage. Attitude changes depend on the value of blackouts-attitude
   ask houses with [ count my-formal-connections with [ overloaded = true ] = 1 ] [
-    ask in-formal-connection-neighbors [ set pole-usage 0 ]
     if random 100 < a-switch-blackout [ set attitude-kplc false ] 
-    set issues-this-tick true
+    decision-log-add-issue "blackout" set issues-this-tick true
     ask out-informal-hookon-neighbors [
       ( ifelse 
-      blackouts-attitude = "only-hurt-kplc" [ if random 100 < a-switch-blackout [ set attitude-kplc false ] set issues-this-tick true ] ; ebw - the logic being that the official infrastructure can't support them
-      blackouts-attitude = "hurt-both-providers" [ if random 100 < a-switch-blackout [ set attitude-ipd false ] set issues-this-tick true ]
+      blackouts-attitude = "only-hurt-kplc" [ if random 100 < a-switch-blackout [ set attitude-kplc false ] decision-log-add-issue "blackout" set issues-this-tick true ] ; ebw - the logic being that the official infrastructure can't support them
+      blackouts-attitude = "hurt-both-providers" [ if random 100 < a-switch-blackout [ set attitude-ipd false ] decision-log-add-issue "blackout" set issues-this-tick true ]
       blackouts-attitude = "ipd-partial-mitigation" [
         ; only households that don't get help from IPDs experience issues and the chance of an attitude switch
         if random 100 > blackout-mitigation-pct [
           if random 100 < a-switch-blackout [ set attitude-ipd false ]
-          set issues-this-tick true
+          decision-log-add-issue "blackout" set issues-this-tick true
           ]
         ]
       blackouts-attitude = "ipd-full-mitigation" [ ]
@@ -457,15 +496,14 @@ to per-week
     
   ; HHs with informal service drops that are overloaded have no usage and are dissatisfied
   ask houses with [ count my-informal-sds with [ overloaded = true ] = 1 ] [
-    ask in-informal-sd-neighbors [ set pole-usage 0 ]
     ( ifelse 
-      blackouts-attitude = "only-hurt-kplc" [ if random 100 < a-switch-blackout [ set attitude-kplc false ] set issues-this-tick true ] ; ebw - the logic being that the official infrastructure can't support them
-      blackouts-attitude = "hurt-both-providers" [ if random 100 < a-switch-blackout [ set attitude-ipd false ] set issues-this-tick true ]
+      blackouts-attitude = "only-hurt-kplc" [ if random 100 < a-switch-blackout [ set attitude-kplc false ] decision-log-add-issue "blackout" set issues-this-tick true ] ; ebw - the logic being that the official infrastructure can't support them
+      blackouts-attitude = "hurt-both-providers" [ if random 100 < a-switch-blackout [ set attitude-ipd false ] decision-log-add-issue "blackout" set issues-this-tick true ]
       blackouts-attitude = "ipd-partial-mitigation" [
         ; only households that don't get help from IPDs experience issues and the chance of an attitude switch
         if random 100 > blackout-mitigation-pct [
           if random 100 < a-switch-blackout [ set attitude-ipd false ]
-          set issues-this-tick true
+          decision-log-add-issue "blackout" set issues-this-tick true
           ]
         ]
       blackouts-attitude = "ipd-full-mitigation" [ ]
@@ -477,6 +515,7 @@ to per-week
   ask houses [
     set spend-ratio expense / desired-max-expense
     if spend-ratio > 1 [
+      decision-log-add-issue "spending-pressure"
       set issues-this-tick true
       set debt debt + (spend-ratio - 1)
     ]  ; set a satisfaction-related parameter . Could be if debt (cumulative excess in spend ratio) is over an amount, the chance of switching provider is virtually guaranteed
@@ -490,6 +529,7 @@ to safety-incidents
     let n-nearby-informal-houses count nearby-houses with [ connection-status = "i" and distance myself <= r1 ]
     let incidents-chance ( n-nearby-informal-houses * incidents-multiplier )
     if random 100 < incidents-chance [
+      decision-log-add-issue "safety-incident"
       set issues-this-tick true
       if random 100 < a-switch-safety [ set attitude-ipd false ]
       ask nearby-houses with [ distance myself <= r2 ] [
@@ -522,140 +562,157 @@ end
 ; Houses with a formal connection that haven't paid the connection fee installment at least 6 times will be disconnected automatically
 ; Unconnected houses get an informal connection at 25% per week, if they are in range
 to add-drop-connections
-  
-  ; Houses with hook-on connections or informal service drops get disconnected
   ask informal-houses with [ times-ipd-not-paid != 0 and switched-this-tick = false ] [
     if random 100 < 30 [
-      ask my-informal-sds [ die ]
-      ask my-informal-hookons [ die ]
+      let captured decision-log-context "n" -1 -1
+      ask my-informal-sds [die]
+      ask my-informal-hookons [die]
       set count-disconnect-ipd count-disconnect-ipd + 1
       set switchcount switchcount + 1
       set connection-status "n"
-      set switched-this-tick true ; Should I remove the "switched-this-tick" from involuntarily disconnected households to allow them to get a replacement connection this tick?
+      set switched-this-tick true
       set color gray
+      decision-log-event "forced-disconnection" "nonpayment-ipd" "add-drop-connections" captured -1 -1 -1 false true
     ]
   ]
-  
-  ; Houses with a formal connection will be disconnected if they haven't paid the connection fee for at least 6 months
-  ; Any hook-on connections will be disconnected as well
-  ask houses with [ connection-status = "f" and times-installment-not-paid > 5 and switched-this-tick = false ] [ ;
-    set color grey
-    ask my-formal-connections [ die ]
+  ask houses with [connection-status = "f" and times-installment-not-paid > 5 and switched-this-tick = false] [
+    let captured decision-log-context "n" -1 -1
+    ask out-informal-hookon-neighbors [
+      let dependent-context decision-log-context "n" -1 -1
+      set switchcount switchcount + 1
+      set connection-status "n"
+      set switched-this-tick true
+      set color gray
+      ask my-in-informal-hookons [die]
+      decision-log-event "forced-disconnection" "host-loss-nonpayment" "add-drop-connections" dependent-context -1 -1 -1 false true
+    ]
+    ask my-formal-connections [die]
     set count-disconnect-kplc count-disconnect-kplc + 1
     set switchcount switchcount + 1
     set connection-status "n"
     set switched-this-tick true
-    ask out-informal-hookon-neighbors [
-      set switchcount switchcount + 1
-      set connection-status "n"
-      set switched-this-tick true ; Should I remove the "switched-this-tick" from involuntarily disconnected households to allow them to get a replacement connection this tick?
-      set color gray
-    ]
-    ask my-out-informal-hookons [ die ] 
+    set color gray
+    decision-log-event "forced-disconnection" "nonpayment-kplc" "add-drop-connections" captured -1 -1 -1 false true
   ]
- 
-  ; Unconnected houses will seek a hook-on connection, or an informal service drop if there are no formally connected households in range.
-  ; This will happen relatively quickly because households strongly prefer having electricity access
-  ask houses with [ connection-status = "n" ] [
-    if random-float 100 < 25 [
-      switch-to-informal
-    ]
+  ; Preserve the original access rule: only informal entry, including same-week
+  ; re-entry after disconnection. The log records both events separately.
+  ask houses with [connection-status = "n"] [
+    let formal-options feasible-formal-poles
+    let informal-options feasible-informal-poles
+    let hookon-options feasible-hookon-houses
+    let captured decision-log-context "i" (count formal-options) (count informal-options + count hookon-options)
+    let draw random-float 100
+    let attempted? draw < 25
+    if attempted? [switch-to-informal]
+    let success? attempted? and connection-status = "i"
+    let target-id ifelse-value success? [decision-log-source-id] [-1]
+    let reason ifelse-value success? ["unconnected-access"] [ifelse-value attempted? ["no-feasible-source"] ["probability-not-selected"]]
+    decision-log-event "access-attempt" reason "add-drop-connections" captured 25 draw target-id attempted? success?
   ]
-  
 end
 
   
 ; Weekly procedure: households that experienced an issue this tick and that haven't already switched provider consider switching provider, based on attitude towards the two providers
 to switch-connections
-  
-  ; Houses with a formal connection that experienced an issue this tick will consider getting an informal hookon or service drop, based the attitudes towards KPLC vs IPDs
-  ask houses with [ connection-status = "f" and issues-this-tick = true and switched-this-tick = false ] [  
-    ( ifelse 
-      ; Households with equal attitudes towards the two providers but next month would be cheaper if they switched
-      attitude-kplc = attitude-ipd and next-month-informal-cost < next-month-formal-cost [
-        if random-float 100 < p-switch-cost-only [ switch-to-informal ]
-      ]
-      ; Households that like KPLC, dislike IPD, but it would be more expensive to switch. NEW to version 2.1
-      attitude-kplc = true and next-month-informal-cost >= next-month-formal-cost [
-        if random-float 100 < p-switch-cost-despite-attitude [ switch-to-informal ]
-      ]
-      ; Households that like IPD, dislike KPLC, and it would be cheaper if they switched
-      attitude-kplc = false and next-month-informal-cost < next-month-formal-cost [ 
-        if random-float 100 < p-switch-all-factors [ switch-to-informal ]
-      ]
-      ; Households that like IPD, dislike KPLC, but it would not be cheaper if they switched
-      attitude-kplc = false [
-        if random-float 100 < p-switch-attitude [ switch-to-informal ]
-      ]
-    )
+  ask houses with [ connection-status = "f" and issues-this-tick = true and switched-this-tick = false ] [
+    consider-provider-switch "i"
   ]
-      
-  ; Houses with a hook-on connection or informal service drop that experienced an issue this tick will consider converting to a formal connection only when there is a nearby pole at a rate based on the attitudes towards KPLC vs IPDs
   ask houses with [ connection-status = "i" and issues-this-tick = true and switched-this-tick = false ] [
-    ( ifelse 
-      attitude-kplc = attitude-ipd and next-month-formal-cost < next-month-informal-cost [
-        if random-float 100 < p-switch-cost-only [ switch-to-formal ]
-      ]
-      ; Households that like IPD, dislike KPLC, but it would be more expensive to switch. NEW to version 2.1
-      attitude-ipd = true and next-month-formal-cost >= next-month-informal-cost [
-        if random-float 100 < p-switch-cost-despite-attitude [ switch-to-formal ]
-      ]
-      attitude-ipd = false and next-month-formal-cost < next-month-informal-cost [
-        if random-float 100 < p-switch-all-factors [ switch-to-formal ]
-      ]
-      attitude-ipd = false [
-        if random-float 100 < p-switch-attitude [ switch-to-formal ]
-      ]
-    )
+    consider-provider-switch "f"
   ]
-  
+end
+
+; Probability is a propensity to attempt a switch, conditional on an issue.
+; A draw may still fail to produce access when no destination is reachable.
+to consider-provider-switch [alternative]
+  let formal-options feasible-formal-poles
+  let informal-options feasible-informal-poles
+  let hookon-options feasible-hookon-houses
+  let captured decision-log-context alternative (count formal-options) (count informal-options + count hookon-options)
+  let current-cost ifelse-value (connection-status = "f") [next-month-formal-cost] [next-month-informal-cost]
+  let alternative-cost ifelse-value (alternative = "f") [next-month-formal-cost] [next-month-informal-cost]
+  let current-positive? ifelse-value (connection-status = "f") [attitude-kplc] [attitude-ipd]
+  let alternative-positive? ifelse-value (alternative = "f") [attitude-kplc] [attitude-ipd]
+  let probability provider-switch-probability current-cost alternative-cost current-positive? alternative-positive? desired-max-expense
+  let draw random-float 100
+  let attempted? draw < probability
+  if attempted? [
+    ifelse alternative = "f" [switch-to-formal] [switch-to-informal]
+  ]
+  let success? attempted? and connection-status = alternative
+  let target-id ifelse-value success? [decision-log-source-id] [-1]
+  let reason ifelse-value success? ["voluntary-switch"] [ifelse-value attempted? ["no-feasible-source"] ["probability-not-selected"]]
+  decision-log-event "voluntary-choice" reason "switch-connections" captured probability draw target-id attempted? success?
+end
+
+; Dimensionless, uncalibrated initial specification. Price savings are scaled
+; by desired monthly spending (the existing reference, not a new cash budget).
+; Cost and alternative approval increase switching; current approval/inertia
+; decrease it. Stable logistic evaluation avoids exp overflow at extreme costs.
+to-report provider-switch-probability [current-cost alternative-cost current-positive? alternative-positive? reference-budget]
+  let cost-advantage (current-cost - alternative-cost) / max (list reference-budget 1)
+  let attitude-advantage (ifelse-value alternative-positive? [1] [0]) - (ifelse-value current-positive? [1] [0])
+  let score (choice-cost-sensitivity * cost-advantage + choice-attitude-weight * attitude-advantage - choice-switching-inertia)
+  ifelse score >= 0 [
+    report 100 / (1 + exp (0 - score))
+  ] [
+    let exponential exp score
+    report 100 * exponential / (1 + exponential)
+  ]
+end
+
+; These sets are shared by choice logging and connection creation. Counts are
+; supply sources, not distinct provider firms. Original reach restrictions stay.
+to-report feasible-formal-poles
+  report poles with [distance myself <= formal-connection-limit]
+end
+
+to-report feasible-informal-poles
+  report poles with [distance myself <= informal-sd-limit and
+    count my-formal-connections with [overloaded = true] + count my-informal-sds with [overloaded = true] = 0]
+end
+
+to-report feasible-hookon-houses
+  report nearby-houses with [distance myself <= hookon-limit and count my-formal-connections with [overloaded = false] = 1]
 end
 
 
 ; Enforcement actions
 ; Finds the n poles with the most informal connections (using enforcement-number), either directly to the pole or hook-on connections. Removes all informal connections to that pole.
- to enforcement-actions
-  
-  ; Every tick update count of informal and formal connections
+to enforcement-actions
   ask poles [
-      let hookon-connections sum [ count my-informal-hookons ] of formal-connection-neighbors
-      set number-informal-connections count my-informal-sds + hookon-connections
-      set number-formal-connections count my-formal-connections 
-    ]
-  
-  ; Periodic removal of informal connections, keeping formal connections. These actions target poles with the highest number of informal connections, including bypassed and hook-ons.
+    let hookon-connections sum [count my-informal-hookons] of formal-connection-neighbors
+    set number-informal-connections count my-informal-sds + hookon-connections
+    set number-formal-connections count my-formal-connections
+  ]
   if ticks mod enforcement-freq = 0 [
-    ; Find target poles
-    let target-poles max-n-of enforcement-number poles [ number-informal-connections ]
-    
+    let target-poles max-n-of enforcement-number poles [number-informal-connections]
     ask target-poles [
-      ; Remove informal service drops
       ask out-informal-sd-neighbors [
+        let captured decision-log-context "n" -1 -1
         set color gray
         set connection-status "n"
-        if random 100 < a-switch-enforcements [ set attitude-kplc false ]
+        if random 100 < a-switch-enforcements [set attitude-kplc false]
+        ask my-informal-sds [die]
+        decision-log-event "forced-disconnection" "enforcement" "enforcement-actions" captured -1 -1 -1 false true
       ]
-      ask my-informal-sds [ die ]
-      
-      ; Remove hookons
       ask formal-connection-neighbors [
         ask informal-hookon-neighbors [
+          let captured decision-log-context "n" -1 -1
           set color gray
           set connection-status "n"
-          if random 100 < a-switch-enforcements [ set attitude-kplc false ]
-          ask my-informal-hookons [ die ]
+          if random 100 < a-switch-enforcements [set attitude-kplc false]
+          ask my-informal-hookons [die]
+          decision-log-event "forced-disconnection" "enforcement" "enforcement-actions" captured -1 -1 -1 false true
         ]
       ]
     ]
-    
-    ; Update number of connections, to give an accurate count after every tick
     ask poles [
-      let hookon-connections sum [ count my-informal-hookons ] of formal-connection-neighbors
+      let hookon-connections sum [count my-informal-hookons] of formal-connection-neighbors
       set number-informal-connections count my-informal-sds + hookon-connections
       set number-formal-connections count my-formal-connections
     ]
   ]
-  
 end
 
 
@@ -708,50 +765,40 @@ end
 
 ; Household switches to informal
 to switch-to-informal
-  let eligible-poles poles with 
-  [ distance myself <= informal-sd-limit and count my-formal-connections with [ overloaded = true ] + count my-informal-sds with [ overloaded = true ]  = 0 ] 
-  let nearest-pole min-one-of eligible-poles [ distance myself ]
-  let eligible-hookons nearby-houses with [ distance myself <= hookon-limit and count my-formal-connections with [ overloaded = false ] = 1 ] ; households won't switch to overloaded poles or households
-  let hookon-neighbor min-one-of eligible-hookons [ distance myself ]
-      
-  ( ifelse 
-    nearest-pole != nobody [
-      ask out-informal-hookon-neighbors [ set connection-status "n" ]
-      ask my-out-informal-hookons [ die ]
-      ask my-formal-connections [ die ]
-      create-informal-sd-from nearest-pole
-      set times-ipd-not-paid 0
-      set switchcount switchcount + 1
-      set switched-this-tick true
-      set weeks-continuous-informal 0
-      set debt 0
-      set connection-status "i"
-    ] 
-    hookon-neighbor != nobody 
-    [
-      ask out-informal-hookon-neighbors [ set connection-status "n" ]
-      ask my-out-informal-hookons [ die ]
-      ask my-formal-connections [ die ]
-      create-informal-hookon-from hookon-neighbor
-      set times-ipd-not-paid 0
-      set switchcount switchcount + 1
-      set switched-this-tick true
-      set weeks-continuous-informal 0
-      set debt 0
-      set connection-status "i"
+  let nearest-pole min-one-of feasible-informal-poles [distance myself]
+  let hookon-neighbor min-one-of feasible-hookon-houses [distance myself]
+  if nearest-pole != nobody or hookon-neighbor != nobody [
+    ask out-informal-hookon-neighbors [
+      let dependent-context decision-log-context "n" -1 -1
+      set connection-status "n"
+      ask my-in-informal-hookons [die]
+      decision-log-event "forced-disconnection" "host-loss-voluntary-switch" "switch-to-informal" dependent-context -1 -1 -1 false true
     ]
-  )
+    ask my-formal-connections [die]
+    ifelse nearest-pole != nobody [
+      create-informal-sd-from nearest-pole [set overloaded false]
+    ] [
+      create-informal-hookon-from hookon-neighbor [set overloaded false]
+    ]
+    set times-ipd-not-paid 0
+    set switchcount switchcount + 1
+    set switched-this-tick true
+    set weeks-continuous-informal 0
+    set debt 0
+    set connection-status "i"
+  ]
 end
 
 ; Household switches to formal
 to switch-to-formal
-  let nearby-poles poles with [ distance myself <= formal-connection-limit ]
+  let nearby-poles feasible-formal-poles
   let nearest-pole min-one-of nearby-poles [ distance myself ]
   
   if nearest-pole != nobody [
     create-formal-connection-from nearest-pole [
       set color green
       set thickness 0.1
+      set overloaded false
     ]
     ask my-in-informal-hookons [ die ] 
     ask my-informal-sds [ die ]
@@ -812,6 +859,9 @@ end
 
 ; Reset global variables to BAU settings; ebw needs to be updated
 to bau
+  set choice-cost-sensitivity 1
+  set choice-attitude-weight 1
+  set choice-switching-inertia 2.2
   set n-households 2000
   set n-poles 100
   set initial-formal-pct 50
@@ -831,9 +881,6 @@ to bau
   set debt-threshold 10
   set init-attitude-kplc 40
   set init-attitude-ipd 60
-  set p-switch-cost-only 20
-  set p-switch-attitude 10
-  set p-switch-all-factors 50
   
 end
 
@@ -986,10 +1033,6 @@ end]]></code>
     <slider x="343" step="1" y="362" max="100" width="150" display="init-attitude-ipd" height="50" min="0" direction="Horizontal" default="60.0" variable="init-attitude-ipd"></slider>
     <slider x="187" step="1" y="361" max="100" width="150" display="init-attitude-kplc" height="50" min="0" direction="Horizontal" default="40.0" variable="init-attitude-kplc"></slider>
     <slider x="333" step="0.1" y="62" max="20" width="150" display="debt-threshold" height="50" min="0" direction="Horizontal" default="10.0" variable="debt-threshold"></slider>
-    <slider x="8" step="1" y="426" max="100" width="150" display="p-switch-cost-only" height="50" min="0" direction="Horizontal" default="40.0" variable="p-switch-cost-only"></slider>
-    <slider x="176" step="1" y="427" max="100" width="150" display="p-switch-attitude" height="50" min="0" direction="Horizontal" default="10.0" variable="p-switch-attitude"></slider>
-    <slider x="338" step="1" y="428" max="100" width="150" display="p-switch-all-factors" height="50" min="0" direction="Horizontal" default="50.0" variable="p-switch-all-factors"></slider>
-    <slider x="13" step="1" y="487" max="100" width="213" display="p-switch-cost-despite-attitude" height="50" min="0" direction="Horizontal" default="20.0" variable="p-switch-cost-despite-attitude"></slider>
     <slider x="15" step="1" y="544" max="100" width="150" display="a-switch-blackout" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-blackout"></slider>
     <slider x="176" step="1" y="541" max="100" width="150" display="a-switch-debt" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-debt"></slider>
     <slider x="336" step="1" y="543" max="100" width="150" display="a-switch-safety" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-safety"></slider>
@@ -1008,42 +1051,28 @@ end]]></code>
     <slider x="185" step="1" y="659" max="100" width="167" display="a-switch-safety-other" height="50" min="0" direction="Horizontal" default="50.0" variable="a-switch-safety-other"></slider>
     <slider x="478" step="0.1" y="757" max="10" width="150" display="r1" height="50" min="0" direction="Horizontal" default="2.0" variable="r1"></slider>
     <slider x="636" step="0.1" y="757" max="10" width="150" display="r2" height="50" min="0" direction="Horizontal" default="2.0" variable="r2"></slider>
+    <slider x="9" step="0.1" y="426" max="10" width="230" display="choice-cost-sensitivity" height="50" min="0" direction="Horizontal" default="1.0" variable="choice-cost-sensitivity"></slider>
+    <slider x="250" step="0.1" y="426" max="10" width="230" display="choice-attitude-weight" height="50" min="0" direction="Horizontal" default="1.0" variable="choice-attitude-weight"></slider>
+    <slider x="9" step="0.1" y="482" max="10" width="230" display="choice-switching-inertia" height="50" min="0" direction="Horizontal" default="2.2" variable="choice-switching-inertia"></slider>
   </widgets>
   <info>## WHAT IS IT?
 
-(a general understanding of what the model is trying to show or explain)
+A spatial agent-based model of formal and informal electricity access. This working revision corrects provider switching, neighborhood caches and weekly load accounting, and adds opt-in decision logging. The original model and its results are retained under results/base/.
 
 ## HOW IT WORKS
 
-(what rules the agents use to create the overall behavior of the model)
+Households have fixed income/demand, a monthly spending reference, and Boolean attitudes to KPLC and informal suppliers. Issue-triggered switching uses a logistic probability combining relative monthly cost savings, the alternative-minus-current attitude difference, and switching inertia. The three choice weights are uncalibrated starting assumptions.
+
+Each week pole-demand records cash- and connection-constrained requested energy before outages. pole-usage records delivered energy. Both are recomputed each week; overload is determined from current requested load. Direct informal drops and hook-ons share the same weekly cap. Cached neighbors are initialized after all households are positioned.
 
 ## HOW TO USE IT
 
-(how to use the model, including a description of each of the items in the Interface tab)
+Run setup and go. The default profile is experiments/base.json. To record decisions after setup, run decision-log-start "decisions.csv"; call decision-log-stop when finished. Existing log files are protected from overwrite. scripts/run_model_diagnostics.py supplies headless weekly results and complete logs.
 
-## THINGS TO NOTICE
+## INTERPRETATION
 
-(suggested things for the user to notice while running the model)
-
-## THINGS TO TRY
-
-(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
-
-## EXTENDING THE MODEL
-
-(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
-
-## NETLOGO FEATURES
-
-(interesting or unusual features of NetLogo that the model uses, particularly in the Code tab; or where workarounds were needed for missing features)
-
-## RELATED MODELS
-
-(models in the NetLogo Models Library and elsewhere which are of related interest)
-
-## CREDITS AND REFERENCES
-
-(a reference to the model's URL on the web if it has one, as well as any other necessary credits, citations, and links)</info>
+Attitudes remain Boolean and follow the original learning rules. The income/budget formulation and informal-only unconnected entry rule are retained. Logged co-occurring issue labels are not causal effect estimates. See docs/model-revision.md for the formula, changes, tests and original-model compatibility.
+</info>
   <turtleShapes>
     <shape name="default" rotatable="true" editableColorIndex="0">
       <polygon color="-1920102913" filled="true" marked="true">

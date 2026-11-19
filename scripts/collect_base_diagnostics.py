@@ -1,4 +1,4 @@
-"""Export base-model observations without changing the model's random stream.
+"""Export ORIGINAL base observations without changing its random stream.
 
 The private model copy adds observer-only globals and procedures. Every added
 observation runs inside ``with-local-randomness``; the supplied setup/go code is
@@ -22,6 +22,11 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import run_model
+
+# Reproduction anchor: the branch model and base profile can evolve separately.
+ORIGINAL_MODEL = ROOT / "results/base/runs/52_ticks/model.nlogox"
+ORIGINAL_BASE = ROOT / "experiments/original-base.json"
+ORIGINAL_CONFIG = ROOT / "experiments/original-model.json"
 
 
 AGGREGATE_FIELDS = [
@@ -248,7 +253,7 @@ def observer_code():
     return code
 
 
-def validate_outputs(output):
+def validate_outputs(output, write_validation=True):
     with (output / "aggregate.csv").open(newline="", encoding="utf-8") as stream:
         records = list(csv.DictReader(stream))
     assert len(records) == 1481, f"Expected 1481 snapshots, got {len(records)}"
@@ -258,7 +263,7 @@ def validate_outputs(output):
         with (ROOT / "results/base/runs" / folder / "results.csv").open(newline="", encoding="utf-8") as stream:
             expected = next(csv.DictReader(stream))
         differences = {}
-        for field in run_model.read_json(ROOT / "experiments/model.json")["metrics"]:
+        for field in run_model.read_json(ORIGINAL_CONFIG)["metrics"]:
             actual = float(by_tick[ticks]["tick" if field == "ticks" else field])
             wanted = float(expected[field])
             if not math.isclose(actual, wanted, rel_tol=1e-12, abs_tol=1e-12):
@@ -267,7 +272,8 @@ def validate_outputs(output):
     for row in records:
         assert sum(float(row[key]) for key in ["formal_households", "informal_households", "unconnected_households"]) == 2000
         assert sum(float(row[key]) for key in ["service_drop_households", "hookon_households"]) == float(row["informal_households"])
-    (output / "validation.json").write_text(json.dumps(checks, indent=2) + "\n", encoding="utf-8")
+    if write_validation:
+        (output / "validation.json").write_text(json.dumps(checks, indent=2) + "\n", encoding="utf-8")
     if not all(check["passed"] for check in checks):
         raise RuntimeError("Instrumented run differs from reference endpoints; see validation.json")
     return checks
@@ -280,7 +286,7 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    source = ROOT / "models/kenya_informal_settlements.nlogox"
+    source = ORIGINAL_MODEL
     source_bytes = source.read_bytes()
     model_text = source_bytes.decode("utf-8")
     original_globals = "globals [ max-income count-disconnect-kplc count-disconnect-ipd count-negotiate ]"
@@ -294,8 +300,8 @@ def main():
     private_text = private_text.replace(blackout_call, blackout_call + "  publication-capture-reliability\n")
     (output / "observed_model.nlogox").write_text(private_text, encoding="utf-8", newline="")
     (output / "observer_procedures.nls").write_text(extra_code, encoding="utf-8")
-    base = run_model.read_json(ROOT / "experiments/base.json")
-    config = run_model.read_json(ROOT / "experiments/model.json")
+    base = run_model.read_json(ORIGINAL_BASE)
+    config = run_model.read_json(ORIGINAL_CONFIG)
     experiment = ET.Element("experiments")
     exp = ET.SubElement(experiment, "experiment", name="publication_observation", repetitions="1", sequentialRunOrder="true", runMetricsEveryStep="false", timeLimit="1480")
     ET.SubElement(exp, "setup").text = "publication-setup"
@@ -312,6 +318,10 @@ def main():
     command = [str(run_model.netlogo_launcher()), "--headless", "--model", str(output / "observed_model.nlogox"), "--setup-file", str(output / "experiment.xml"), "--experiment", "publication_observation", "--table", str(output / "behaviorspace.csv"), "--threads", "1"]
     provenance = {
         "source_model": str(source.relative_to(ROOT)),
+        "model_role": "original-archived-base",
+        "base_profile": str(ORIGINAL_BASE.relative_to(ROOT)),
+        "base_profile_sha256": run_model.digest(ORIGINAL_BASE),
+        "experiment_config": str(ORIGINAL_CONFIG.relative_to(ROOT)),
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "observed_model_sha256": run_model.digest(output / "observed_model.nlogox"),
         "observer_code_sha256": hashlib.sha256(extra_code.encode()).hexdigest(),

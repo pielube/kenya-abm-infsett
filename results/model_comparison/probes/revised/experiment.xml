@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<experiments><experiment name="comparison_probes" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="false" timeLimit="1"><setup>comparison-probes</setup><go>tick</go><metrics><metric>ticks</metric></metrics><subExperiments><subExperiment /></subExperiments></experiment></experiments>

@@ -1,6 +1,6 @@
 # Base model diagnostic figures
 
-Four figures describe access and churn, Boolean provider attitudes, the implemented outage process, and affordability across household incomes. The deliverables are in the Git-tracked [base results archive](../results/base/README.md):
+Four figures describe the archived original model's access and churn, Boolean provider attitudes, outage process, and affordability across household incomes. The deliverables are in the Git-tracked [base results archive](../results/base/README.md). The revised working model is described separately in [model revisions](model-revision.md); its changes are not represented in these original figures.
 
 - [Runtime and interpretation report](../results/base/report.md).
 - [All four figures as a vector PDF](../results/base/figures/base_model_extended_data.pdf).
@@ -11,7 +11,7 @@ The ordinary base-run endpoints and their experiment files are preserved in [run
 
 On the tested Intel Core i7-1265U, sequential fresh-process benchmarks gave median wall times of **13.35 seconds for 52 ticks** and **30.59 seconds for 1,480 ticks**, using three executions per horizon. These times include startup, setup, simulation and output writing. Detailed observation collection took **137.34 seconds** separately. Both observed endpoints reproduced all 13 original result metrics.
 
-The figures describe a single seed-42 realization, rather than an ensemble or empirical validation. Household interquartile ranges show heterogeneity, not uncertainty in an estimated mean. The source model's incomplete neighbor cache and accumulated pole-usage mechanism remain part of the implementation being described; see the [base model guide](base-model-guide.md).
+The figures describe a single seed-42 realization, rather than an ensemble or empirical validation. Household interquartile ranges show heterogeneity, not uncertainty in an estimated mean. The archived original's incomplete neighbor cache and accumulated pole-usage mechanism remain part of the implementation being described; see the [base model guide](base-model-guide.md).
 
 The artwork follows the current [Nature Extended Data specifications](https://research-figure-guide.nature.com/figures/extended-data-formatting-guidelines/): 180 mm wide, under 170 mm high, Arial text, consistent panel labels and strokes. PDF and SVG files are editable masters. The submission-format TIFFs are 300 dpi RGB, losslessly compressed, and under 10 MB each. Numerical source data are supplied as panel CSVs and a workbook per figure. Final placement and scientific claims should follow the intended journal and manuscript.
 
@@ -23,7 +23,7 @@ python scripts/collect_base_diagnostics.py --output outputs/base_publication_rep
 python scripts/plot_base_figures.py --data outputs/base_publication_repeat/data --output outputs/base_publication_repeat
 ```
 
-The first two scripts use the existing Python environment. Plotting needs the packages in [requirements-figures.txt](../requirements-figures.txt). The analysis used an existing `dataviz-env` environment with those packages, leaving the simulation environment intact.
+The benchmark and collection scripts pin `results/base/runs/52_ticks/model.nlogox` and `experiments/original-base.json`; the benchmark also selects `experiments/original-model.json`. They therefore reproduce the original model even as the working model changes. The first two scripts use the existing Python environment. Plotting needs the packages in [requirements-figures.txt](../requirements-figures.txt). The analysis used an existing `dataviz-env` environment with those packages, leaving the simulation environment intact.
 
 The plotting script defaults to the archived `results/base/data` inputs and `results/base` output. To re-render the archive from its saved observations, run `python scripts/plot_base_figures.py`. Benchmarking and collection default to ignored scratch outputs; the explicit fresh-directory commands above keep new executions separate from the reviewed archive.
 

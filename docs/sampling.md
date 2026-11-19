@@ -5,6 +5,22 @@ Kenya's informal settlements. It uses the ranges in `data/parameters.csv` to
 choose combinations of values to try. See [running the model](running.md) for
 the separate base-run and batch-run workflow.
 
+This guide's parameter counts and saved design describe the **original model**.
+`data/parameters.csv` and `outputs/lhs_256/` contain four `p-switch-*` controls
+that the revised working model no longer accepts. Run that design with
+`--config experiments/original-model.json` in a fresh output directory, for example:
+
+```sh
+python run_model.py batch --config experiments/original-model.json --runs outputs/lhs_256/runs.csv --output outputs/batch_original
+```
+
+The revised model needs a new parameter table and newly sampled design that
+replace those four controls with `choice-cost-sensitivity`,
+`choice-attitude-weight`, and `choice-switching-inertia`. Choose defensible ranges
+for these dimensionless weights before sampling. Their base defaults are 1, 1,
+and 2.2; they are not calibrated estimates. The sampling code is reusable with
+`--parameters`, but the existing design must not be relabeled as revised-model inputs.
+
 ## Configurations and runs
 
 A **configuration** is one combination of input values, such as the number of
@@ -145,7 +161,7 @@ text, so convert numeric columns to whole or decimal numbers using the saved
 parameter table. Start each run with its `model_seed` and pass the input columns
 to the model. Keep the IDs with the results so you can match them to the inputs.
 
-`run_model.py` handles these steps, supplies the model's saved defaults for the
+With the original-model configuration selected, `run_model.py` handles these steps, supplies the model's saved defaults for the
 excluded limits, and translates the attitude labels. Run duration and recorded
 results are explained in [running the model](running.md).
 

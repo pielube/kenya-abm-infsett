@@ -1,0 +1,2 @@
+run_id,sample_id,replicate,model_seed,ticks,households,poles,formal_households,informal_households,unconnected_households,service_drop_households,hookon_households,trust_kplc_pct,trust_ipd_pct,mean_debt,mean_switchcount,overloaded_poles
+1,1,1,42,1480.0,2000.0,100.0,396.0,1506.0,98.0,1271.0,235.0,24.4,32.8,51.516387946112836,32.3115,20.0

@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "horizon": 52,
+  "seed": 42,
+  "check": "Standard final-only runner and weekly diagnostic/logging runner give identical result cells",
+  "results": {
+    "run_id": "1",
+    "sample_id": "1",
+    "replicate": "1",
+    "model_seed": "42",
+    "ticks": "52.0",
+    "households": "2000.0",
+    "poles": "100.0",
+    "formal_households": "206.0",
+    "informal_households": "1599.0",
+    "unconnected_households": "195.0",
+    "service_drop_households": "1470.0",
+    "hookon_households": "129.0",
+    "trust_kplc_pct": "23.45",
+    "trust_ipd_pct": "24.45",
+    "mean_debt": "9.266039300877631",
+    "mean_switchcount": "2.1075",
+    "overloaded_poles": "22.0"
+  }
+}

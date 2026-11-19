@@ -1,4 +1,4 @@
-"""Time fresh, sequential base runs without altering the NetLogo model.
+"""Time fresh, sequential ORIGINAL base runs without altering their model.
 
 The reported wall time includes the Python runner, JVM launch/compilation,
 model setup, simulation, and result writing. It is not a pure go-loop timing.
@@ -22,7 +22,10 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = ROOT / "models/kenya_informal_settlements.nlogox"
+# Historical benchmarks must not silently switch to the evolving branch model.
+MODEL = ROOT / "results/base/runs/52_ticks/model.nlogox"
+BASE = ROOT / "experiments/original-base.json"
+CONFIG = ROOT / "experiments/original-model.json"
 
 
 def digest(path):
@@ -93,7 +96,9 @@ def main():
         },
         "model_sha256": model_hash,
         "runner_sha256": digest(ROOT / "run_model.py"),
-        "base_config_sha256": digest(ROOT / "experiments/base.json"),
+        "base_config_sha256": digest(BASE),
+        "experiment_config_sha256": digest(CONFIG),
+        "model_role": "original-archived-base",
         "runs": [], "notes": [],
     }
     print("Starting isolated sequential NetLogo benchmark", flush=True)
@@ -103,7 +108,8 @@ def main():
             run_output = output / f"ticks_{ticks}_repeat_{repetition}"
             if run_output.exists():
                 raise FileExistsError(f"Benchmark requires a fresh directory: {run_output}")
-            command = [sys.executable, str(ROOT / "run_model.py"), "base", "--steps", str(ticks),
+            command = [sys.executable, str(ROOT / "run_model.py"), "base", "--config", str(CONFIG),
+                       "--base", str(BASE), "--steps", str(ticks),
                        "--threads", "1", "--output", str(run_output)]
             started = time.perf_counter()
             result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,

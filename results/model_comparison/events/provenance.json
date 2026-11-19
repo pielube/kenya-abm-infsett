@@ -1,0 +1,28 @@
+{
+  "script": "scripts/summarize_comparison_events.py",
+  "script_sha256": "e1d561671f92ae36cc22789637942dc6b07541b522cd30f98deb947a13c50c66",
+  "inputs": [
+    {
+      "path": "results/base/data/transitions.csv",
+      "sha256": "9771b3a3d64f719a9204a3698f6b174d9078e8fcc6bccb503372c840c5734109"
+    },
+    {
+      "path": "results/base/data/aggregate.csv",
+      "sha256": "8ab980a4c08772786a173f393f8835f1a01571564662c579bc6be3bbf2da81ee"
+    },
+    {
+      "path": "results/attitude_trust_revision/52_ticks/decisions.csv",
+      "sha256": "01fafbd5ed302f864ae043e1265421c1b2c48081536ac57b0be9a178439c3df8"
+    },
+    {
+      "path": "results/attitude_trust_revision/52_ticks/trajectory.csv",
+      "sha256": "7df2ebcc9ef5da481bb723af01c2009fb7e234a14fce6dbc7fa18425fd7c2069"
+    },
+    {
+      "path": "results/attitude_trust_revision/event_validation.json",
+      "sha256": "a6a8fed7dfb09ba0fe44705045cdc1222abcbd1492024416ec36bcb3ad0cf9ac"
+    }
+  ],
+  "alignment": "Original transition tick t compares setup/observation t-1 to t; revised decision_tick t-1 events are pooled to completed observation tick t.",
+  "inference": "For each household-week, compare its first logged pre-state to its last logged post-state. A household with no logged event has no recorded state change. The event completeness assumption is checked against aggregate flows at every week and all per-household event sequences."
+}
